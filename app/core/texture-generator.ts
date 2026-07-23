@@ -7,6 +7,7 @@ import type {
 
 const MAX_SOURCE_BYTES = 48 * 1024 * 1024;
 const MAX_SOURCE_EDGE = 16384;
+const MAX_SOURCE_PIXELS = 64 * 1024 * 1024;
 const SUPPORTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
 
 const clamp = (value: number, min = 0, max = 1) =>
@@ -44,6 +45,9 @@ export async function importSourceTexture(file: File): Promise<SourceTextureAsse
   }
   if (image.naturalWidth > MAX_SOURCE_EDGE || image.naturalHeight > MAX_SOURCE_EDGE) {
     throw new Error("The albedo image cannot exceed 16,384 pixels on either edge.");
+  }
+  if (image.naturalWidth * image.naturalHeight > MAX_SOURCE_PIXELS) {
+    throw new Error("Choose an albedo image with fewer than 64 megapixels.");
   }
   return {
     name: file.name.slice(0, 240),

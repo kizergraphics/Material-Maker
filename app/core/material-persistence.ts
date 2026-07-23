@@ -12,6 +12,24 @@ import { evaluateSourceTexture } from "./texture-generator";
 const DB_NAME = "forge-material-studio";
 const DB_VERSION = 1;
 const PROJECT_STORE = "projects";
+const MAX_SOURCE_BYTES = 48 * 1024 * 1024;
+const MAX_SOURCE_DATA_URL_LENGTH = Math.ceil((MAX_SOURCE_BYTES * 4) / 3) + 128;
+const MAX_SOURCE_PIXELS = 64 * 1024 * 1024;
+const MAX_PACK_BYTES = 250 * 1024 * 1024;
+const MAX_ZIP_ENTRIES = 64;
+const MAX_ZIP_ENTRY_BYTES = 96 * 1024 * 1024;
+const MAX_ZIP_TOTAL_BYTES = 384 * 1024 * 1024;
+const MAX_MANIFEST_BYTES = 64 * 1024;
+const MAX_PROJECT_BYTES = 96 * 1024 * 1024;
+
+function isLocalImageDataUrl(value: string, mimeType?: string) {
+  const allowedPrefix = mimeType
+    ? `data:${mimeType};base64,`
+    : /^data:image\/(?:png|jpeg|webp);base64,/i;
+  return typeof allowedPrefix === "string"
+    ? value.startsWith(allowedPrefix)
+    : allowedPrefix.test(value.slice(0, 40));
+}
 
 const finiteNumber = z.number().finite();
 const mapSettingsSchema = z.object({
@@ -55,14 +73,71 @@ const mapSettingsSchema = z.object({
   }).partial().optional(),
 }).partial();
 
+const nodeValuesSchema = z
+  .record(z.string().max(64), z.union([finiteNumber, z.boolean(), z.string().max(160_000)]))
+  .superRefine((values, context) => {
+    const thumbnail = values.thumbnail;
+    if (typeof thumbnail === "string" && !isLocalImageDataUrl(thumbnail)) {
+      context.addIssue({
+        code: "custom",
+        path: ["thumbnail"],
+        message: "Map thumbnails must be embedded image data.",
+      });
+    }
+  });
+
+const graphNodeSchema = z.object({
+  id: z.string().min(1).max(128),
+  type: z.literal("materialNode").optional(),
+  position: z.object({ x: finiteNumber, y: finiteNumber }),
+  data: z.object({
+    label: z.string().min(1).max(160),
+    kind: z.enum(["color", "noise", "levels", "blend", "roughness", "metallic", "normal", "textureMap", "output"]),
+    category: z.enum(["input", "generator", "filter", "blend", "output"]),
+    values: nodeValuesSchema,
+  }),
+});
+
+const graphEdgeSchema = z.object({
+  id: z.string().min(1).max(160),
+  source: z.string().min(1).max(128),
+  target: z.string().min(1).max(128),
+  sourceHandle: z.string().max(64).nullable().optional(),
+  targetHandle: z.string().max(64).nullable().optional(),
+});
+
+const sourceTextureSchema = z.object({
+  name: z.string().max(240),
+  mimeType: z.enum(["image/png", "image/jpeg", "image/webp"]),
+  dataUrl: z.string().max(MAX_SOURCE_DATA_URL_LENGTH),
+  width: z.number().int().positive().max(16384),
+  height: z.number().int().positive().max(16384),
+  sizeBytes: z.number().int().nonnegative().max(MAX_SOURCE_BYTES),
+}).superRefine((source, context) => {
+  if (!isLocalImageDataUrl(source.dataUrl, source.mimeType)) {
+    context.addIssue({
+      code: "custom",
+      path: ["dataUrl"],
+      message: "Source images must be embedded in the material package.",
+    });
+  }
+  if (source.width * source.height > MAX_SOURCE_PIXELS) {
+    context.addIssue({
+      code: "custom",
+      path: ["width"],
+      message: "Source image dimensions exceed the safe pixel limit.",
+    });
+  }
+});
+
 const projectSchema = z.object({
   schemaVersion: z.union([z.literal(1), z.literal(2), z.literal(PROJECT_SCHEMA_VERSION)]),
   id: z.string().min(1).max(128),
   name: z.string().min(1).max(160),
   createdAt: z.string(),
   updatedAt: z.string(),
-  nodes: z.array(z.any()).max(1000),
-  edges: z.array(z.any()).max(3000),
+  nodes: z.array(graphNodeSchema).max(1000),
+  edges: z.array(graphEdgeSchema).max(3000),
   preview: z.object({
     shape: z.enum(["sphere", "cube", "plane"]),
     channel: z.enum([
@@ -78,17 +153,7 @@ const projectSchema = z.object({
     autoRotate: z.boolean(),
     tiled: z.boolean(),
   }),
-  sourceTexture: z
-    .object({
-      name: z.string().max(240),
-      mimeType: z.enum(["image/png", "image/jpeg", "image/webp"]),
-      dataUrl: z.string(),
-      width: z.number().int().positive().max(16384),
-      height: z.number().int().positive().max(16384),
-      sizeBytes: z.number().nonnegative(),
-    })
-    .nullable()
-    .optional(),
+  sourceTexture: sourceTextureSchema.nullable().optional(),
   mapSettings: mapSettingsSchema.optional(),
   exportResolution: z.union([z.literal(512), z.literal(1024), z.literal(2048)]).optional(),
 });
@@ -293,14 +358,46 @@ export function downloadBlob(blob: Blob, filename: string) {
 }
 
 export async function importMaterialPack(file: File) {
-  if (file.size > 250 * 1024 * 1024) {
+  if (file.size > MAX_PACK_BYTES) {
     throw new Error("This package is larger than the 250 MB safety limit.");
   }
   const zip = await JSZip.loadAsync(file, { checkCRC32: true });
+  const entries = Object.values(zip.files);
+  if (entries.length > MAX_ZIP_ENTRIES) {
+    throw new Error("This package contains too many files.");
+  }
+  let totalUncompressedBytes = 0;
+  for (const entry of entries) {
+    const originalName = (entry as { unsafeOriginalName?: string }).unsafeOriginalName ?? entry.name;
+    const pathSegments = originalName.replace(/\\/g, "/").split("/");
+    if (originalName.startsWith("/") || pathSegments.includes("..")) {
+      throw new Error("This package contains an unsafe file path.");
+    }
+    if (entry.dir) continue;
+    const entrySize = (entry as unknown as { _data?: { uncompressedSize?: unknown } })
+      ._data?.uncompressedSize;
+    if (typeof entrySize !== "number" || !Number.isSafeInteger(entrySize) || entrySize < 0) {
+      throw new Error("This package has invalid file metadata.");
+    }
+    if (entrySize > MAX_ZIP_ENTRY_BYTES) {
+      throw new Error("This package contains a file that is too large to open safely.");
+    }
+    totalUncompressedBytes += entrySize;
+    if (totalUncompressedBytes > MAX_ZIP_TOTAL_BYTES) {
+      throw new Error("This package expands beyond the safe memory limit.");
+    }
+  }
   const manifestEntry = zip.file("manifest.json");
   const projectEntry = zip.file("material.json");
   if (!manifestEntry || !projectEntry) {
     throw new Error("This file is missing the Forge material manifest or project.");
+  }
+  const manifestSize = (manifestEntry as unknown as { _data?: { uncompressedSize?: number } })
+    ._data?.uncompressedSize ?? Number.POSITIVE_INFINITY;
+  const projectSize = (projectEntry as unknown as { _data?: { uncompressedSize?: number } })
+    ._data?.uncompressedSize ?? Number.POSITIVE_INFINITY;
+  if (manifestSize > MAX_MANIFEST_BYTES || projectSize > MAX_PROJECT_BYTES) {
+    throw new Error("This package manifest or project is too large to open safely.");
   }
   const manifest = JSON.parse(await manifestEntry.async("string")) as unknown;
   const manifestResult = z

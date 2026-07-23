@@ -28,6 +28,9 @@ test("server-renders the material studio shell", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
+  assert.match(response.headers.get("content-security-policy") ?? "", /object-src 'none'/);
+  assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+  assert.equal(response.headers.get("x-frame-options"), "DENY");
   const html = await response.text();
   assert.match(html, /Forge Material Studio/i);
   assert.match(html, /Material Studio/);
@@ -64,6 +67,8 @@ test("keeps persistence local and removes the starter preview", async () => {
   assert.match(persistence, /textures\/ambient-occlusion\.png/);
   assert.match(persistence, /deleteProjectLocal/);
   assert.match(persistence, /loadProjectsLocal/);
+  assert.match(persistence, /MAX_ZIP_TOTAL_BYTES/);
+  assert.match(persistence, /Source images must be embedded/);
   assert.match(studio, /Save to Library/);
   assert.match(studio, /Place Map Lab maps/);
   assert.match(studio, /Nodes & recipes/);
