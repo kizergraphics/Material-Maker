@@ -76,6 +76,9 @@ test("keeps persistence local and removes the starter preview", async () => {
   assert.match(preview, /DefaultRenderingPipeline/);
   assert.match(preview, /ShadowGenerator/);
   assert.match(preview, /procedural-studio-environment/);
+  assert.match(preview, /createPoleFreeSphere/);
+  assert.match(preview, /POLE-FREE UV/);
+  assert.doesNotMatch(preview, /MeshBuilder\.CreateSphere/);
   assert.match(node, /material-node__thumbnail/);
   assert.match(hosting, /"d1": null/);
   assert.match(hosting, /"r2": null/);

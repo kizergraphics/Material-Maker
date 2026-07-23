@@ -19,6 +19,7 @@ import {
   StandardMaterial,
   Texture,
   Vector3,
+  VertexData,
 } from "@babylonjs/core";
 import { useEffect, useRef, useState } from "react";
 import type { MaterialEvaluation } from "../core/material-evaluator";
@@ -75,6 +76,72 @@ function createStudioEnvironment(scene: Scene) {
   scene.environmentIntensity = 0.82;
 }
 
+function createPoleFreeSphere(scene: Scene) {
+  const subdivisions = 48;
+  const radius = 1.375;
+  const positions: number[] = [];
+  const normals: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+  const faces = [
+    { center: [1, 0, 0], axisU: [0, 0, -1], axisV: [0, 1, 0] },
+    { center: [-1, 0, 0], axisU: [0, 0, 1], axisV: [0, 1, 0] },
+    { center: [0, 1, 0], axisU: [1, 0, 0], axisV: [0, 0, -1] },
+    { center: [0, -1, 0], axisU: [1, 0, 0], axisV: [0, 0, 1] },
+    { center: [0, 0, 1], axisU: [1, 0, 0], axisV: [0, 1, 0] },
+    { center: [0, 0, -1], axisU: [-1, 0, 0], axisV: [0, 1, 0] },
+  ] as const;
+
+  for (const face of faces) {
+    const vertexOffset = positions.length / 3;
+    for (let row = 0; row <= subdivisions; row += 1) {
+      const v = row / subdivisions;
+      const faceV = v * 2 - 1;
+      for (let column = 0; column <= subdivisions; column += 1) {
+        const u = column / subdivisions;
+        const faceU = u * 2 - 1;
+        const x = face.center[0] + face.axisU[0] * faceU + face.axisV[0] * faceV;
+        const y = face.center[1] + face.axisU[1] * faceU + face.axisV[1] * faceV;
+        const z = face.center[2] + face.axisU[2] * faceU + face.axisV[2] * faceV;
+
+        // Spherify a cube instead of collapsing latitude rows into pole vertices.
+        // Each of the six faces retains a full, evenly distributed UV square.
+        const sphereX = x * Math.sqrt(1 - (y * y) / 2 - (z * z) / 2 + (y * y * z * z) / 3);
+        const sphereY = y * Math.sqrt(1 - (z * z) / 2 - (x * x) / 2 + (z * z * x * x) / 3);
+        const sphereZ = z * Math.sqrt(1 - (x * x) / 2 - (y * y) / 2 + (x * x * y * y) / 3);
+        const inverseLength = 1 / Math.hypot(sphereX, sphereY, sphereZ);
+        const normalX = sphereX * inverseLength;
+        const normalY = sphereY * inverseLength;
+        const normalZ = sphereZ * inverseLength;
+
+        positions.push(normalX * radius, normalY * radius, normalZ * radius);
+        normals.push(normalX, normalY, normalZ);
+        uvs.push(u, 1 - v);
+      }
+    }
+
+    const rowWidth = subdivisions + 1;
+    for (let row = 0; row < subdivisions; row += 1) {
+      for (let column = 0; column < subdivisions; column += 1) {
+        const topLeft = vertexOffset + row * rowWidth + column;
+        const topRight = topLeft + 1;
+        const bottomLeft = topLeft + rowWidth;
+        const bottomRight = bottomLeft + 1;
+        indices.push(topLeft, topRight, bottomLeft, topRight, bottomRight, bottomLeft);
+      }
+    }
+  }
+
+  const mesh = new Mesh("preview-mesh", scene);
+  const vertexData = new VertexData();
+  vertexData.positions = positions;
+  vertexData.normals = normals;
+  vertexData.uvs = uvs;
+  vertexData.indices = indices;
+  vertexData.applyToMesh(mesh, true);
+  return mesh;
+}
+
 function createPreviewMesh(scene: Scene, shape: PreviewShape) {
   if (shape === "cube") {
     const mesh = MeshBuilder.CreateBox(
@@ -94,11 +161,7 @@ function createPreviewMesh(scene: Scene, shape: PreviewShape) {
     mesh.position.y = 0.1;
     return mesh;
   }
-  return MeshBuilder.CreateSphere(
-    "preview-mesh",
-    { diameter: 2.75, segments: 96 },
-    scene,
-  );
+  return createPoleFreeSphere(scene);
 }
 
 function createTexture(
@@ -409,6 +472,7 @@ export function MaterialPreview({
       <div className="material-preview__badges" aria-hidden="true">
         <span>256 PREVIEW</span>
         <span>{fps} FPS</span>
+        {shape === "sphere" ? <span>POLE-FREE UV</span> : null}
         {channel !== "material" && !mapSettings[channel].enabled ? <span>MAP OFF</span> : null}
       </div>
       <div className="material-preview__hint">Drag to orbit · Scroll to zoom</div>
