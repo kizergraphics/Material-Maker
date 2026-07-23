@@ -7,6 +7,7 @@ import {
   CircleGauge,
   Dices,
   Gem,
+  Image,
   Palette,
   SlidersHorizontal,
   Waves,
@@ -26,6 +27,7 @@ const icons: Record<MaterialNodeKind, ComponentType<{ size?: number }>> = {
   roughness: CircleGauge,
   metallic: Gem,
   normal: Waves,
+  textureMap: Image,
   output: Box,
 };
 
@@ -41,6 +43,8 @@ const inputs: Partial<Record<MaterialNodeKind, Array<{ id: string; label: string
     { id: "normal", label: "Normal" },
     { id: "roughness", label: "Roughness" },
     { id: "metallic", label: "Metallic" },
+    { id: "height", label: "Height" },
+    { id: "ao", label: "AO" },
   ],
 };
 
@@ -60,6 +64,8 @@ function valueSummary(data: MaterialNodeData) {
       return (values.value ?? 0.5).toFixed(2);
     case "normal":
       return `${(values.strength ?? 1).toFixed(2)} strength`;
+    case "textureMap":
+      return `${values.mapChannel ?? "texture"}${values.enabled === false ? " · disabled" : " · generated"}`;
     default:
       return "Metallic / roughness";
   }

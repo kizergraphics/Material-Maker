@@ -2,6 +2,7 @@
 
 import {
   Download,
+  GitBranch,
   ImagePlus,
   RefreshCw,
   ShieldCheck,
@@ -77,6 +78,7 @@ export function TextureMapWorkbench({
   onChooseSource,
   onRemoveSource,
   onDropSource,
+  onSendToGraph,
 }: {
   evaluation: MaterialEvaluation;
   source: SourceTextureAsset;
@@ -88,6 +90,7 @@ export function TextureMapWorkbench({
   onChooseSource: () => void;
   onRemoveSource: () => void;
   onDropSource: (file: File) => void;
+  onSendToGraph: () => void;
 }) {
   const onDrop = (event: DragEvent<HTMLElement>) => {
     event.preventDefault();
@@ -112,6 +115,9 @@ export function TextureMapWorkbench({
           <span className={`generation-state${isGenerating ? " is-active" : ""}`}>
             <RefreshCw size={12} /> {isGenerating ? "Updating maps" : error ?? "Maps ready"}
           </span>
+          <button className="button button--primary" onClick={onSendToGraph} disabled={isGenerating}>
+            <GitBranch size={14} /> Send maps to graph
+          </button>
           <button className="button button--ghost" onClick={onChooseSource}>
             <ImagePlus size={14} /> Replace albedo
           </button>

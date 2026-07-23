@@ -26,6 +26,7 @@ import {
   type PreviewSettings,
   type PreviewShape,
   type SourceTextureAsset,
+  type TextureMapChannel,
 } from "./material-types";
 
 type Snapshot = {
@@ -58,6 +59,7 @@ type MaterialStore = {
   onEdgesChange: (changes: EdgeChange<MaterialGraphEdge>[]) => void;
   onConnect: (connection: Connection) => void;
   addNode: (kind: MaterialNodeKind, position?: XYPosition) => void;
+  syncGeneratedMapsToGraph: () => void;
   updateNodeValue: (nodeId: string, values: Partial<NodeValueMap>) => void;
   checkpoint: () => void;
   undo: () => void;
@@ -187,6 +189,60 @@ export const useMaterialStore = create<MaterialStore>((set, get) => ({
     }));
   },
 
+  syncGeneratedMapsToGraph: () => {
+    const channels: Array<{ id: TextureMapChannel; label: string }> = [
+      { id: "baseColor", label: "Generated albedo" },
+      { id: "height", label: "Generated height" },
+      { id: "normal", label: "Generated normal" },
+      { id: "roughness", label: "Generated roughness" },
+      { id: "metallic", label: "Generated metallic" },
+      { id: "ao", label: "Generated AO" },
+    ];
+    set((state) => {
+      const output = state.nodes.find((node) => node.data.kind === "output");
+      if (!output || !state.sourceTexture) return state;
+      const generatedIds = new Set(channels.map((channel) => `generated-map-${channel.id}`));
+      const generatedNodes: MaterialGraphNode[] = channels.map((channel, index) => ({
+        id: `generated-map-${channel.id}`,
+        type: "materialNode",
+        position: { x: output.position.x - 310, y: output.position.y - 72 + index * 96 },
+        data: {
+          label: channel.label,
+          kind: "textureMap",
+          category: "input",
+          values: {
+            mapChannel: channel.id,
+            enabled: state.mapSettings[channel.id].enabled,
+          },
+        },
+      }));
+      const outputHandles = new Set<TextureMapChannel>(channels.map((channel) => channel.id));
+      const retainedEdges = state.edges.filter(
+        (edge) =>
+          !generatedIds.has(edge.source) &&
+          !(edge.target === output.id && outputHandles.has(edge.targetHandle as TextureMapChannel)),
+      );
+      const generatedEdges: MaterialGraphEdge[] = channels
+        .filter((channel) => state.mapSettings[channel.id].enabled)
+        .map((channel) => ({
+          id: `generated-map-edge-${channel.id}`,
+          source: `generated-map-${channel.id}`,
+          sourceHandle: "out",
+          target: output.id,
+          targetHandle: channel.id,
+        }));
+      return {
+        ...withCheckpoint(state),
+        nodes: [
+          ...state.nodes.filter((node) => !generatedIds.has(node.id)),
+          ...generatedNodes,
+        ],
+        edges: [...retainedEdges, ...generatedEdges],
+        selectedNodeId: "generated-map-baseColor",
+      };
+    });
+  },
+
   updateNodeValue: (nodeId, values) =>
     set((state) => ({
       ...withCheckpoint(state),
@@ -244,20 +300,55 @@ export const useMaterialStore = create<MaterialStore>((set, get) => ({
     })),
 
   removeSourceTexture: () =>
-    set((state) => ({
-      ...withCheckpoint(state),
-      sourceTexture: null,
-      preview: { ...state.preview, channel: "material" },
-    })),
+    set((state) => {
+      const generatedIds = new Set(
+        (["baseColor", "height", "normal", "roughness", "metallic", "ao"] as TextureMapChannel[])
+          .map((channel) => `generated-map-${channel}`),
+      );
+      return {
+        ...withCheckpoint(state),
+        sourceTexture: null,
+        nodes: state.nodes.filter((node) => !generatedIds.has(node.id)),
+        edges: state.edges.filter((edge) => !generatedIds.has(edge.source)),
+        preview: { ...state.preview, channel: "material" },
+      };
+    }),
 
   updateMapSettings: (map, values) =>
-    set((state) => ({
-      ...withCheckpoint(state),
-      mapSettings: {
-        ...state.mapSettings,
-        [map]: { ...state.mapSettings[map], ...values },
-      },
-    })),
+    set((state) => {
+      const generatedNodeId = `generated-map-${map}`;
+      const generatedNodeExists = state.nodes.some((node) => node.id === generatedNodeId);
+      const enabled = values.enabled;
+      let nextNodes = state.nodes;
+      let nextEdges = state.edges;
+      if (generatedNodeExists && typeof enabled === "boolean") {
+        nextNodes = state.nodes.map((node) =>
+          node.id === generatedNodeId
+            ? { ...node, data: { ...node.data, values: { ...node.data.values, enabled } } }
+            : node,
+        );
+        nextEdges = state.edges.filter((edge) => edge.id !== `generated-map-edge-${map}`);
+        const output = state.nodes.find((node) => node.data.kind === "output");
+        if (enabled && output) {
+          nextEdges = [...nextEdges, {
+            id: `generated-map-edge-${map}`,
+            source: generatedNodeId,
+            sourceHandle: "out",
+            target: output.id,
+            targetHandle: map,
+          }];
+        }
+      }
+      return {
+        ...withCheckpoint(state),
+        nodes: nextNodes,
+        edges: nextEdges,
+        mapSettings: {
+          ...state.mapSettings,
+          [map]: { ...state.mapSettings[map], ...values },
+        },
+      };
+    }),
 
   resetMapSettings: () =>
     set((state) => ({

@@ -127,25 +127,34 @@ input:focus-visible {
   gap: 4px;
 }
 
-.studio-nav a {
+.studio-nav a,
+.studio-nav button {
   position: relative;
   display: grid;
   place-items: center;
+  grid-auto-flow: column;
+  gap: 6px;
   min-width: 70px;
   padding: 0 15px;
   color: var(--muted);
+  background: transparent;
+  border: 0;
   font-size: 12px;
   font-weight: 600;
   text-decoration: none;
+  cursor: pointer;
 }
 
 .studio-nav a:hover,
-.studio-nav a.is-active {
+.studio-nav a.is-active,
+.studio-nav button:hover,
+.studio-nav button.is-active {
   color: var(--text);
   background: rgba(255,255,255,.025);
 }
 
-.studio-nav a.is-active::after {
+.studio-nav a.is-active::after,
+.studio-nav button.is-active::after {
   content: "";
   position: absolute;
   left: 16px;
@@ -869,7 +878,81 @@ input:focus-visible {
 .map-lab-header > div:last-child {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 6px;
+}
+
+.graph-help-panel {
+  position: fixed;
+  z-index: 55;
+  top: 56px;
+  right: 0;
+  bottom: 26px;
+  width: min(390px, 92vw);
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  background: #11171b;
+  border-left: 1px solid #39444c;
+  box-shadow: -22px 0 60px rgba(0,0,0,.5);
+}
+
+.graph-help-panel > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.graph-help-panel h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.graph-help-intro {
+  margin: 12px 0;
+  color: #aab3b9;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.graph-help-node-list {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: #313b43 transparent;
+}
+
+.graph-help-node-list section,
+.graph-help-recipes section {
+  padding: 9px 0;
+  border-top: 1px solid var(--line-soft);
+}
+
+.graph-help-node-list strong,
+.graph-help-recipes strong {
+  color: #d7dde0;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.graph-help-node-list p,
+.graph-help-recipes p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.graph-help-recipes {
+  margin-top: 14px;
+  padding: 12px;
+  background: #0d1215;
+  border: 1px solid var(--line);
+  border-radius: 6px;
 }
 
 .generation-state {
@@ -1036,7 +1119,13 @@ input:focus-visible {
   border: 1px solid rgba(53, 64, 73, .8);
   border-radius: 5px;
   backdrop-filter: blur(8px);
-  pointer-events: none;
+}
+
+.graph-callout .button {
+  min-height: 25px;
+  margin-left: 5px;
+  padding: 0 8px;
+  font-size: 8px;
 }
 
 .graph-callout__dot {
@@ -1075,7 +1164,7 @@ input:focus-visible {
 }
 
 .material-node[data-kind="output"] {
-  min-height: 143px;
+  min-height: 190px;
   border-color: #6d543d;
 }
 
@@ -2091,6 +2180,7 @@ input[type="range"]::-webkit-slider-thumb {
   }
 
   .header-import,
+  .header-save,
   .save-state {
     display: none;
   }
@@ -2147,6 +2237,11 @@ input[type="range"]::-webkit-slider-thumb {
 
   .map-lab-header > div:last-child {
     width: 100%;
+  }
+
+  .graph-help-panel {
+    top: 54px;
+    bottom: 0;
   }
 
   .generation-state {

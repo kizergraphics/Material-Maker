@@ -10,6 +10,7 @@ export type MaterialNodeKind =
   | "roughness"
   | "metallic"
   | "normal"
+  | "textureMap"
   | "output";
 
 export type PreviewShape = "sphere" | "cube" | "plane";
@@ -96,6 +97,8 @@ export type NodeValueMap = {
   opacity?: number;
   value?: number;
   strength?: number;
+  mapChannel?: TextureMapChannel;
+  enabled?: boolean;
 };
 
 export type MaterialNodeData = Record<string, unknown> & {

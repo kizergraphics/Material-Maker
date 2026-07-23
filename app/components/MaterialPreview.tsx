@@ -236,6 +236,8 @@ export function MaterialPreview({
     if (channel === "normal") {
       const diagnostic = new StandardMaterial("normal-diagnostic", scene);
       diagnostic.disableLighting = true;
+      diagnostic.diffuseColor = Color3.Black();
+      diagnostic.specularColor = Color3.Black();
       diagnostic.emissiveTexture = normal;
       diagnostic.emissiveColor = Color3.White();
       material = diagnostic;
@@ -262,6 +264,8 @@ export function MaterialPreview({
       );
       const diagnostic = new StandardMaterial(`${channel}-diagnostic`, scene);
       diagnostic.disableLighting = true;
+      diagnostic.diffuseColor = Color3.Black();
+      diagnostic.specularColor = Color3.Black();
       diagnostic.emissiveTexture = diagnosticTexture;
       diagnostic.emissiveColor = Color3.White();
       material = diagnostic;

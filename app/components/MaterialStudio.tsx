@@ -7,14 +7,14 @@ import {
   MiniMap,
   ReactFlow,
   ReactFlowProvider,
+  useReactFlow,
   type NodeTypes,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
-  Box,
   BoxIcon,
+  BookOpen,
   Check,
-  ChevronDown,
   Circle,
   CircleDot,
   CloudOff,
@@ -22,6 +22,7 @@ import {
   Download,
   FileImage,
   FileArchive,
+  GitBranch,
   Grid3X3,
   Layers3,
   Maximize2,
@@ -32,6 +33,7 @@ import {
   Redo2,
   RotateCw,
   Search,
+  Save,
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
@@ -93,6 +95,39 @@ const shapeIcons: Record<PreviewShape, typeof Circle> = {
   cube: BoxIcon,
   plane: Square,
 };
+
+const nodeHelp = [
+  { name: "Base color", purpose: "Sets the surface color. Use it as a solid starting layer or as one side of a blend." },
+  { name: "Value noise", purpose: "Creates repeatable procedural variation. Use Scale for feature size and Seed for a new pattern." },
+  { name: "Levels", purpose: "Remaps dark, mid, and bright values. Use it to sharpen masks or control how much of a noise pattern appears." },
+  { name: "Blend", purpose: "Mixes two inputs. Connect a base surface to Base and scratches, dirt, or noise to Blend." },
+  { name: "Roughness", purpose: "Controls reflection sharpness. Low values look polished; high values look matte or chalky." },
+  { name: "Metallic", purpose: "Separates metal from non-metal. Use 1 for bare metal and 0 for paint, stone, wood, or plastic." },
+  { name: "Normal from height", purpose: "Turns grayscale height detail into surface direction. Increase Strength carefully to avoid inflated detail." },
+  { name: "Generated map", purpose: "Represents a map sent from Map Lab. Enabled generated maps connect directly to the matching material input." },
+  { name: "PBR material", purpose: "The final output. Connect color, normal, roughness, metallic, height, and AO here for preview and export." },
+];
+
+function GraphHelpPanel({ onClose }: { onClose: () => void }) {
+  return (
+    <aside className="graph-help-panel" aria-label="Graph node help">
+      <header>
+        <div><span className="eyebrow">Graph guide</span><h2>Nodes & recipes</h2></div>
+        <button className="icon-button" onClick={onClose} aria-label="Close graph help"><X size={15} /></button>
+      </header>
+      <p className="graph-help-intro">Connect nodes from left to right. Drag from an output dot to a labeled input on another node.</p>
+      <div className="graph-help-node-list">
+        {nodeHelp.map((item) => <section key={item.name}><strong>{item.name}</strong><p>{item.purpose}</p></section>)}
+      </div>
+      <div className="graph-help-recipes">
+        <span className="eyebrow">Quick recipes</span>
+        <section><strong>Weathered metal</strong><p>Color + Noise → Blend → Base color. Noise → Levels → Normal. Add high Metallic and medium Roughness.</p></section>
+        <section><strong>Painted surface</strong><p>Blend a paint color with subtle noise. Keep Metallic at 0 and use Roughness around 0.55–0.8.</p></section>
+        <section><strong>Image workflow</strong><p>Create maps in Map Lab, choose which maps are enabled, then use “Send maps to graph.”</p></section>
+      </div>
+    </aside>
+  );
+}
 
 function RangeField({
   label,
@@ -257,6 +292,13 @@ function NodeInspector({ node }: { node: MaterialGraphNode | null }) {
         />
       ) : null}
 
+      {node.data.kind === "textureMap" ? (
+        <div className="map-overview">
+          <FileImage size={17} />
+          <div><strong>Generated {node.data.values.mapChannel}</strong><span>This node stays linked to the current Image-to-Material settings.</span></div>
+        </div>
+      ) : null}
+
       {node.data.kind === "output" ? (
         <div className="output-map-list">
           {[
@@ -264,6 +306,8 @@ function NodeInspector({ node }: { node: MaterialGraphNode | null }) {
             ["Normal", "Linear"],
             ["Roughness", "Linear"],
             ["Metallic", "Linear"],
+            ["Height", "Linear"],
+            ["Ambient occlusion", "Linear"],
           ].map(([label, space]) => (
             <div key={label}>
               <span><CircleDot size={12} />{label}</span>
@@ -282,6 +326,7 @@ function NodeInspector({ node }: { node: MaterialGraphNode | null }) {
 }
 
 function StudioWorkspace() {
+  const reactFlow = useReactFlow();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const albedoInputRef = useRef<HTMLInputElement | null>(null);
   const [search, setSearch] = useState("");
@@ -292,6 +337,7 @@ function StudioWorkspace() {
   const [rendererLabel, setRendererLabel] = useState("WebGL2 renderer");
   const [workspaceView, setWorkspaceView] = useState<"graph" | "maps">("graph");
   const [savedProjects, setSavedProjects] = useState<MaterialProject[]>([]);
+  const [isHelpOpen, setHelpOpen] = useState(false);
 
   const projectId = useMaterialStore((state) => state.projectId);
   const projectName = useMaterialStore((state) => state.projectName);
@@ -310,6 +356,7 @@ function StudioWorkspace() {
   const onEdgesChange = useMaterialStore((state) => state.onEdgesChange);
   const onConnect = useMaterialStore((state) => state.onConnect);
   const addNode = useMaterialStore((state) => state.addNode);
+  const syncGeneratedMapsToGraph = useMaterialStore((state) => state.syncGeneratedMapsToGraph);
   const setSelectedNode = useMaterialStore((state) => state.setSelectedNode);
   const checkpoint = useMaterialStore((state) => state.checkpoint);
   const undo = useMaterialStore((state) => state.undo);
@@ -433,6 +480,20 @@ function StudioWorkspace() {
     }
   }, []);
 
+  const saveToLibrary = useCallback(async () => {
+    setSaveState("saving");
+    try {
+      const project = useMaterialStore.getState().toProject();
+      await saveProjectLocal(project);
+      setSavedProjects(await loadProjectsLocal());
+      setSaveState("saved");
+      setNotice(`${project.name} saved to Library`);
+    } catch (error) {
+      setSaveState("error");
+      setNotice(error instanceof Error ? error.message : "Material could not be saved");
+    }
+  }, []);
+
   const openViewer = useCallback(async () => {
     setSaveState("saving");
     try {
@@ -474,6 +535,13 @@ function StudioWorkspace() {
     event.target.value = "";
     if (file) void openAlbedoFile(file);
   }, [openAlbedoFile]);
+
+  const sendMapsToGraph = useCallback(() => {
+    syncGeneratedMapsToGraph();
+    setWorkspaceView("graph");
+    setNotice("Generated maps added and connected in Graph Lab");
+    window.setTimeout(() => reactFlow.fitView({ padding: 0.2, duration: 280 }), 0);
+  }, [reactFlow, syncGeneratedMapsToGraph]);
 
   const addLibraryNode = (kind: MaterialNodeKind) => {
     const index = nodes.length;
@@ -523,6 +591,7 @@ function StudioWorkspace() {
         <nav className="studio-nav" aria-label="Primary navigation">
           <Link href="/" className="is-active">Studio</Link>
           <Link href="/viewer" onClick={(event) => { event.preventDefault(); void openViewer(); }}>Viewer</Link>
+          <button className={isHelpOpen ? "is-active" : ""} onClick={() => setHelpOpen((value) => !value)}><BookOpen size={13} /> Help</button>
         </nav>
 
         <div className="studio-header__actions">
@@ -533,6 +602,9 @@ function StudioWorkspace() {
           <button className="button button--ghost header-import" onClick={() => fileInputRef.current?.click()}>
             <Upload size={15} />
             Import
+          </button>
+          <button className="button button--ghost header-save" onClick={() => void saveToLibrary()} disabled={saveState === "saving"}>
+            <Save size={14} /> Save to Library
           </button>
           <button className="button button--primary" onClick={handleExport} disabled={exporting}>
             {exporting ? <RotateCw className="spin" size={15} /> : <Download size={15} />}
@@ -564,7 +636,9 @@ function StudioWorkspace() {
         {isCompactMenuOpen ? (
           <div className="compact-menu">
             <button onClick={() => fileInputRef.current?.click()}><Upload size={14} /> Import package</button>
+            <button onClick={() => void saveToLibrary()}><Save size={14} /> Save to Library</button>
             <button onClick={handleExport}><Download size={14} /> Export package</button>
+            <button onClick={() => setHelpOpen(true)}><BookOpen size={14} /> Graph help</button>
             <Link href="/viewer" onClick={(event) => { event.preventDefault(); void openViewer(); }}><MonitorUp size={14} /> Open viewer</Link>
           </div>
         ) : null}
@@ -700,6 +774,7 @@ function StudioWorkspace() {
             onChooseSource={() => albedoInputRef.current?.click()}
             onRemoveSource={removeSourceTexture}
             onDropSource={(file) => void openAlbedoFile(file)}
+            onSendToGraph={sendMapsToGraph}
           />
         ) : (
         <section className="graph-panel" aria-label="Material node graph">
@@ -740,6 +815,7 @@ function StudioWorkspace() {
           <div className="graph-callout">
             <span className="graph-callout__dot" />
             <div><strong>Live graph</strong><span>Changes evaluate locally</span></div>
+            {sourceTexture ? <button className="button button--ghost" onClick={sendMapsToGraph}><GitBranch size={12} /> Place Map Lab maps</button> : null}
           </div>
         </section>
         )}
@@ -817,6 +893,7 @@ function StudioWorkspace() {
       </footer>
 
       {notice ? <div className="studio-toast" role="status"><Check size={14} />{notice}</div> : null}
+      {isHelpOpen ? <GraphHelpPanel onClose={() => setHelpOpen(false)} /> : null}
     </main>
   );
 }

@@ -51,8 +51,10 @@ test("server-renders the no-upload web viewer", async () => {
 });
 
 test("keeps persistence local and removes the starter preview", async () => {
-  const [persistence, hosting] = await Promise.all([
+  const [persistence, studio, preview, hosting] = await Promise.all([
     readFile(new URL("../app/core/material-persistence.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/MaterialStudio.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/MaterialPreview.tsx", import.meta.url), "utf8"),
     readFile(new URL("../.openai/hosting.json", import.meta.url), "utf8"),
   ]);
   assert.match(persistence, /indexedDB\.open/);
@@ -61,6 +63,10 @@ test("keeps persistence local and removes the starter preview", async () => {
   assert.match(persistence, /textures\/ambient-occlusion\.png/);
   assert.match(persistence, /deleteProjectLocal/);
   assert.match(persistence, /loadProjectsLocal/);
+  assert.match(studio, /Save to Library/);
+  assert.match(studio, /Place Map Lab maps/);
+  assert.match(studio, /Nodes & recipes/);
+  assert.match(preview, /diagnostic\.diffuseColor = Color3\.Black/);
   assert.match(hosting, /"d1": null/);
   assert.match(hosting, /"r2": null/);
   await assert.rejects(access(new URL("app/_sites-preview", projectRoot)));
