@@ -40,12 +40,14 @@ export const textureChannels: Array<{
   { id: "ao", label: "Ambient occlusion", space: "Linear", description: "Cavity shading" },
 ];
 
-function TextureCanvas({
+export function TextureMapCanvas({
   evaluation,
   channel,
+  className,
 }: {
   evaluation: MaterialEvaluation;
   channel: TextureMapChannel;
+  className?: string;
 }) {
   const ref = useRef<HTMLCanvasElement | null>(null);
   useEffect(() => {
@@ -64,7 +66,7 @@ function TextureCanvas({
       0,
     );
   }, [channel, evaluation]);
-  return <canvas ref={ref} aria-hidden="true" />;
+  return <canvas ref={ref} className={className} aria-hidden="true" />;
 }
 
 export function TextureMapWorkbench({
@@ -136,7 +138,7 @@ export function TextureMapWorkbench({
             aria-label={`${item.label} map, ${settings[item.id].enabled ? "enabled" : "disabled"}`}
           >
             <span className="map-card__image">
-              <TextureCanvas evaluation={evaluation} channel={item.id} />
+              <TextureMapCanvas evaluation={evaluation} channel={item.id} />
               <span>{item.space}</span>
             </span>
             <span className="map-card__copy">
@@ -226,6 +228,7 @@ export function TextureMapInspector({
   onUpdate,
   onReset,
   onSetExportResolution,
+  note = "Every control is non-destructive and saved with this local project.",
 }: {
   channel: PreviewChannel;
   settings: MapGenerationSettings;
@@ -235,6 +238,7 @@ export function TextureMapInspector({
   onUpdate: (map: keyof MapGenerationSettings, values: Record<string, number | boolean>) => void;
   onReset: () => void;
   onSetExportResolution: (resolution: ExportResolution) => void;
+  note?: string;
 }) {
   const downloadCurrent = async () => {
     if (channel === "material") return;
@@ -348,7 +352,7 @@ export function TextureMapInspector({
 
       <div className="inspector-note">
         <ShieldCheck size={14} />
-        <span>Every control is non-destructive and saved with this local project.</span>
+        <span>{note}</span>
       </div>
     </div>
   );

@@ -49,6 +49,9 @@ test("server-renders the no-upload web viewer", async () => {
   assert.match(html, /No files are uploaded/);
   assert.match(html, /Open \.mmpack/);
   assert.match(html, /My materials/);
+  assert.match(html, /Save viewer tweaks/);
+  assert.match(html, /Generated outputs/);
+  assert.match(html, /Graph values/);
   assert.match(html, /Private by design/);
   assert.match(html, /Ambient occlusion/);
 });
@@ -84,6 +87,9 @@ test("keeps persistence local and removes the starter preview", async () => {
   assert.match(preview, /SEAMLESS TRI-PLANAR/);
   assert.match(preview, /MeshBuilder\.CreateSphere/);
   assert.doesNotMatch(preview, /createPoleFreeSphere/);
+  assert.match(studio, /createGraphNodeThumbnails/);
+  assert.match(studio, /evaluateNodeMap/);
+  assert.match(node, /has-thumbnail/);
   assert.match(node, /material-node__thumbnail/);
   assert.match(hosting, /"d1": null/);
   assert.match(hosting, /"r2": null/);

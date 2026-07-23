@@ -1177,6 +1177,15 @@ input:focus-visible {
   align-items: center;
 }
 
+.material-node.has-thumbnail:not([data-kind="output"]) {
+  min-height: 105px;
+}
+
+.material-node.has-thumbnail .material-node__body {
+  min-height: 72px;
+  align-items: center;
+}
+
 .material-node.is-selected {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px rgba(226,164,95,.25), 0 10px 26px rgba(0,0,0,.42);
@@ -2032,6 +2041,11 @@ input[type="range"]::-webkit-slider-thumb {
   font-size: 8px;
 }
 
+.viewer-save-button {
+  width: 100%;
+  margin-top: 8px;
+}
+
 .viewer-inspector > section {
   margin-top: 22px;
 }
@@ -2095,6 +2109,115 @@ input[type="range"]::-webkit-slider-thumb {
   color: var(--muted);
   font-size: 8px;
   font-weight: 500;
+}
+
+.viewer-map-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.viewer-map-grid > button {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  padding: 6px;
+  color: var(--muted);
+  text-align: left;
+  background: #151b1f;
+  border: 1px solid #2d363d;
+  border-radius: 5px;
+}
+
+.viewer-map-grid > button:hover,
+.viewer-map-grid > button.is-active {
+  color: var(--text);
+  border-color: #76593c;
+  background: #1c1d1b;
+}
+
+.viewer-map-grid > button.is-disabled {
+  opacity: .48;
+}
+
+.viewer-map-thumbnail {
+  width: 46px;
+  height: 46px;
+  overflow: hidden;
+  background: #080b0d;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 4px;
+}
+
+.viewer-map-thumbnail canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.viewer-map-grid strong,
+.viewer-map-grid code {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viewer-map-grid strong {
+  font-size: 8px;
+  font-weight: 600;
+}
+
+.viewer-map-grid code {
+  margin-top: 4px;
+  color: var(--muted-2);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 7px;
+}
+
+.viewer-editor-section .inspector-heading {
+  margin-bottom: 8px;
+}
+
+.viewer-editor-section .map-overview {
+  margin-bottom: 6px;
+}
+
+.viewer-node-picker {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.viewer-node-picker span {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.viewer-node-picker select {
+  min-width: 0;
+  height: 28px;
+  padding: 0 7px;
+  color: #dce1e4;
+  background: #171d22;
+  border: 1px solid #354049;
+  border-radius: 4px;
+  font-size: 9px;
+}
+
+.viewer-node-editor .range-field {
+  grid-template-columns: 70px minmax(70px, 1fr) 34px;
+}
+
+.viewer-editor-empty {
+  color: var(--muted-2);
+  font-size: 9px;
 }
 
 .viewer-privacy-card {

@@ -62,7 +62,10 @@ import {
   saveProjectLocal,
 } from "../core/material-persistence";
 import { useMaterialStore } from "../core/material-store";
-import type { MaterialEvaluation } from "../core/material-evaluator";
+import {
+  evaluateNodeMap,
+  type MaterialEvaluation,
+} from "../core/material-evaluator";
 import { importSourceTexture, pixelsForChannel } from "../core/texture-generator";
 import { useMaterialEvaluation } from "../core/use-material-evaluation";
 import {
@@ -106,31 +109,78 @@ const generatedMapChannels: TextureMapChannel[] = [
   "ao",
 ];
 
-function createMapThumbnails(evaluation: MaterialEvaluation) {
+function createThumbnail(
+  pixels: Uint8ClampedArray,
+  width: number,
+  height: number,
+) {
   const source = document.createElement("canvas");
-  source.width = evaluation.width;
-  source.height = evaluation.height;
+  source.width = width;
+  source.height = height;
   const sourceContext = source.getContext("2d");
   const thumbnail = document.createElement("canvas");
   thumbnail.width = 96;
   thumbnail.height = 96;
   const thumbnailContext = thumbnail.getContext("2d");
-  if (!sourceContext || !thumbnailContext) return {};
+  if (!sourceContext || !thumbnailContext) return "";
+  sourceContext.putImageData(
+    new ImageData(new Uint8ClampedArray(pixels), width, height),
+    0,
+    0,
+  );
+  thumbnailContext.drawImage(source, 0, 0, 96, 96);
+  return thumbnail.toDataURL("image/webp", 0.82);
+}
 
+function createMapThumbnails(evaluation: MaterialEvaluation) {
   return Object.fromEntries(generatedMapChannels.map((channel) => {
-    sourceContext.putImageData(
-      new ImageData(
-        new Uint8ClampedArray(pixelsForChannel(evaluation, channel)),
+    return [
+      channel,
+      createThumbnail(
+        pixelsForChannel(evaluation, channel),
         evaluation.width,
         evaluation.height,
       ),
-      0,
-      0,
-    );
-    thumbnailContext.clearRect(0, 0, 96, 96);
-    thumbnailContext.drawImage(source, 0, 0, 96, 96);
-    return [channel, thumbnail.toDataURL("image/webp", 0.82)];
+    ];
   })) as Partial<Record<TextureMapChannel, string>>;
+}
+
+function createGraphNodeThumbnails(
+  nodes: MaterialGraphNode[],
+  edges: MaterialProject["edges"],
+  evaluation: MaterialEvaluation,
+) {
+  return Object.fromEntries(nodes.map((node) => {
+    const mapChannel = node.data.values.mapChannel;
+    if (
+      node.data.kind === "textureMap" &&
+      mapChannel &&
+      generatedMapChannels.includes(mapChannel)
+    ) {
+      return [
+        node.id,
+        createThumbnail(
+          pixelsForChannel(evaluation, mapChannel),
+          evaluation.width,
+          evaluation.height,
+        ),
+      ];
+    }
+    if (node.data.kind === "output") {
+      return [
+        node.id,
+        createThumbnail(evaluation.albedo, evaluation.width, evaluation.height),
+      ];
+    }
+    return [
+      node.id,
+      createThumbnail(
+        evaluateNodeMap({ nodes, edges }, node.id, 64),
+        64,
+        64,
+      ),
+    ];
+  })) as Record<string, string>;
 }
 
 const nodeHelp = [
@@ -375,6 +425,7 @@ function StudioWorkspace() {
   const [workspaceView, setWorkspaceView] = useState<"graph" | "maps">("graph");
   const [savedProjects, setSavedProjects] = useState<MaterialProject[]>([]);
   const [isHelpOpen, setHelpOpen] = useState(false);
+  const [graphNodeThumbnails, setGraphNodeThumbnails] = useState<Record<string, string>>({});
 
   const projectId = useMaterialStore((state) => state.projectId);
   const projectName = useMaterialStore((state) => state.projectName);
@@ -414,6 +465,25 @@ function StudioWorkspace() {
     { nodes, edges, sourceTexture, mapSettings },
     256,
   );
+  const graphNodes = useMemo(() => {
+    return nodes.map((node) => ({
+      ...node,
+      data: {
+        ...node.data,
+        values: {
+          ...node.data.values,
+          thumbnail: graphNodeThumbnails[node.id] || node.data.values.thumbnail,
+        },
+      },
+    }));
+  }, [graphNodeThumbnails, nodes]);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      setGraphNodeThumbnails(createGraphNodeThumbnails(nodes, edges, evaluation));
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [edges, evaluation, nodes]);
 
   const selectedNode = useMemo(
     () => nodes.find((node) => node.id === selectedNodeId) ?? null,
@@ -816,7 +886,7 @@ function StudioWorkspace() {
         ) : (
         <section className="graph-panel" aria-label="Material node graph">
           <ReactFlow
-            nodes={nodes}
+            nodes={graphNodes}
             edges={edges}
             nodeTypes={nodeTypes}
             onNodesChange={onNodesChange}

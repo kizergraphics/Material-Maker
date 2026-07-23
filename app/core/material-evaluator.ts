@@ -332,6 +332,85 @@ export function evaluateMaterial(
   };
 }
 
+export function evaluateNodeMap(
+  project: Pick<MaterialProject, "nodes" | "edges">,
+  nodeId: string,
+  size = 64,
+) {
+  const nodes = new Map(project.nodes.map((node) => [node.id, node]));
+  const node = nodes.get(nodeId);
+  const pixels = new Uint8ClampedArray(size * size * 4);
+  if (!node) return pixels;
+  if (node.data.kind === "output") {
+    return evaluateMaterial(project, size).albedo;
+  }
+
+  const step = 1 / size;
+  const heightSource = node.data.kind === "normal"
+    ? sourceFor(project.edges, node.id, "height")
+    : undefined;
+  const normalStrength = node.data.values.strength ?? 1;
+
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const u = x / size;
+      const v = y / size;
+      const offset = (y * size + x) * 4;
+      if (node.data.kind !== "normal") {
+        writePixel(
+          pixels,
+          offset,
+          evaluateNode(node.id, u, v, nodes, project.edges, new Set()),
+        );
+        continue;
+      }
+
+      const heightL = evaluateNode(
+        heightSource,
+        (u - step + 1) % 1,
+        v,
+        nodes,
+        project.edges,
+        new Set(),
+      )[0];
+      const heightR = evaluateNode(
+        heightSource,
+        (u + step) % 1,
+        v,
+        nodes,
+        project.edges,
+        new Set(),
+      )[0];
+      const heightD = evaluateNode(
+        heightSource,
+        u,
+        (v - step + 1) % 1,
+        nodes,
+        project.edges,
+        new Set(),
+      )[0];
+      const heightU = evaluateNode(
+        heightSource,
+        u,
+        (v + step) % 1,
+        nodes,
+        project.edges,
+        new Set(),
+      )[0];
+      let nx = (heightL - heightR) * normalStrength * 2;
+      let ny = (heightD - heightU) * normalStrength * 2;
+      let nz = 1;
+      const length = Math.hypot(nx, ny, nz) || 1;
+      nx /= length;
+      ny /= length;
+      nz /= length;
+      writePixel(pixels, offset, [nx * 0.5 + 0.5, ny * 0.5 + 0.5, nz, 1]);
+    }
+  }
+
+  return pixels;
+}
+
 export function pixelsToCanvas(
   pixels: Uint8ClampedArray,
   width: number,

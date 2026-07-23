@@ -80,7 +80,7 @@ export function MaterialNode(props: NodeProps<MaterialGraphNode>) {
 
   return (
     <article
-      className={`material-node material-node--${data.category}${selected ? " is-selected" : ""}`}
+      className={`material-node material-node--${data.category}${thumbnail ? " has-thumbnail" : ""}${selected ? " is-selected" : ""}`}
       data-kind={data.kind}
     >
       <header className="material-node__header">
@@ -92,7 +92,7 @@ export function MaterialNode(props: NodeProps<MaterialGraphNode>) {
       </header>
 
       <div className="material-node__body">
-        {color ? (
+        {color && !thumbnail ? (
           <span
             className="material-node__swatch"
             style={{ backgroundColor: color }}
