@@ -45,6 +45,7 @@ test("server-renders the no-upload web viewer", async () => {
   assert.match(html, /<title>Material Viewer · Forge Material Studio<\/title>/i);
   assert.match(html, /No files are uploaded/);
   assert.match(html, /Open \.mmpack/);
+  assert.match(html, /My materials/);
   assert.match(html, /Private by design/);
   assert.match(html, /Ambient occlusion/);
 });
@@ -58,6 +59,8 @@ test("keeps persistence local and removes the starter preview", async () => {
   assert.match(persistence, /privacy:\s*"local-only"/);
   assert.match(persistence, /textures\/height\.png/);
   assert.match(persistence, /textures\/ambient-occlusion\.png/);
+  assert.match(persistence, /deleteProjectLocal/);
+  assert.match(persistence, /loadProjectsLocal/);
   assert.match(hosting, /"d1": null/);
   assert.match(hosting, /"r2": null/);
   await assert.rejects(access(new URL("app/_sites-preview", projectRoot)));

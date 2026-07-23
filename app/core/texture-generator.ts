@@ -155,9 +155,13 @@ export function generateDerivedMaps(
 
   for (let index = 0; index < pixelCount; index += 1) {
     const offset = index * 4;
-    let r = source[offset] / 255;
-    let g = source[offset + 1] / 255;
-    let b = source[offset + 2] / 255;
+    const sourceR = source[offset] / 255;
+    const sourceG = source[offset + 1] / 255;
+    const sourceB = source[offset + 2] / 255;
+    luminance[index] = sourceR * 0.2126 + sourceG * 0.7152 + sourceB * 0.0722;
+    let r = sourceR;
+    let g = sourceG;
+    let b = sourceB;
     [r, g, b] = applyHue(r, g, b, settings.baseColor.hue);
     const luma = r * 0.2126 + g * 0.7152 + b * 0.0722;
     r = luma + (r - luma) * settings.baseColor.saturation;
@@ -170,7 +174,6 @@ export function generateDerivedMaps(
     albedo[offset + 1] = Math.round(clamp(g) * 255);
     albedo[offset + 2] = Math.round(clamp(b) * 255);
     albedo[offset + 3] = source[offset + 3];
-    luminance[index] = clamp(r) * 0.2126 + clamp(g) * 0.7152 + clamp(b) * 0.0722;
   }
 
   const blurredHeight = boxBlur(
@@ -187,8 +190,12 @@ export function generateDerivedMaps(
     writeGray(heightMap, index * 4, heights[index]);
   }
 
+  // Every derived channel starts from the immutable source luminance. Height
+  // edits therefore affect only the height map instead of cascading into the
+  // normal, roughness, metallic, and AO maps.
+  const normalSource = luminance;
   const aoBlur = boxBlur(
-    heights,
+    luminance,
     width,
     height,
     settings.ao.radius * Math.max(1, scale),
@@ -199,10 +206,10 @@ export function generateDerivedMaps(
     for (let x = 0; x < width; x += 1) {
       const index = y * width + x;
       const offset = index * 4;
-      const left = heights[y * width + ((x - 1 + width) % width)];
-      const right = heights[y * width + ((x + 1) % width)];
-      const down = heights[((y - 1 + height) % height) * width + x];
-      const up = heights[((y + 1) % height) * width + x];
+      const left = normalSource[y * width + ((x - 1 + width) % width)];
+      const right = normalSource[y * width + ((x + 1) % width)];
+      const down = normalSource[((y - 1 + height) % height) * width + x];
+      const up = normalSource[((y + 1) % height) * width + x];
       let nx = (left - right) * settings.normal.strength * settings.normal.detail * 2;
       let ny = (down - up) * settings.normal.strength * settings.normal.detail * 2;
       if (settings.normal.invertY) ny *= -1;
@@ -216,19 +223,19 @@ export function generateDerivedMaps(
       normal[offset + 2] = Math.round(nz * 255);
       normal[offset + 3] = 255;
 
-      let rough = settings.roughness.base + (heights[index] - 0.5) * settings.roughness.variation;
+      let rough = settings.roughness.base + (luminance[index] - 0.5) * settings.roughness.variation;
       if (settings.roughness.invert) rough = 1 - rough;
       rough = clamp(rough);
       roughnessTotal += rough;
       writeGray(roughness, offset, rough);
 
-      let metal = settings.metallic.base + (heights[index] - 0.5) * settings.metallic.variation;
+      let metal = settings.metallic.base + (luminance[index] - 0.5) * settings.metallic.variation;
       if (settings.metallic.invert) metal = 1 - metal;
       metal = clamp(metal);
       metallicTotal += metal;
       writeGray(metallic, offset, metal);
 
-      const cavity = Math.max(0, aoBlur[index] - heights[index]);
+      const cavity = Math.max(0, aoBlur[index] - luminance[index]);
       const ao = clamp(1 - cavity * settings.ao.strength * 5 + settings.ao.bias);
       writeGray(ambientOcclusion, offset, ao);
     }

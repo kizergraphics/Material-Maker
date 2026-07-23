@@ -16,33 +16,39 @@ const PROJECT_STORE = "projects";
 const finiteNumber = z.number().finite();
 const mapSettingsSchema = z.object({
   baseColor: z.object({
+    enabled: z.boolean(),
     brightness: finiteNumber,
     contrast: finiteNumber,
     saturation: finiteNumber,
     hue: finiteNumber,
   }).partial().optional(),
   height: z.object({
+    enabled: z.boolean(),
     contrast: finiteNumber,
     bias: finiteNumber,
     blur: finiteNumber,
     invert: z.boolean(),
   }).partial().optional(),
   normal: z.object({
+    enabled: z.boolean(),
     strength: finiteNumber,
     detail: finiteNumber,
     invertY: z.boolean(),
   }).partial().optional(),
   roughness: z.object({
+    enabled: z.boolean(),
     base: finiteNumber,
     variation: finiteNumber,
     invert: z.boolean(),
   }).partial().optional(),
   metallic: z.object({
+    enabled: z.boolean(),
     base: finiteNumber,
     variation: finiteNumber,
     invert: z.boolean(),
   }).partial().optional(),
   ao: z.object({
+    enabled: z.boolean(),
     strength: finiteNumber,
     radius: finiteNumber,
     bias: finiteNumber,
@@ -50,7 +56,7 @@ const mapSettingsSchema = z.object({
 }).partial();
 
 const projectSchema = z.object({
-  schemaVersion: z.union([z.literal(1), z.literal(PROJECT_SCHEMA_VERSION)]),
+  schemaVersion: z.union([z.literal(1), z.literal(2), z.literal(PROJECT_SCHEMA_VERSION)]),
   id: z.string().min(1).max(128),
   name: z.string().min(1).max(160),
   createdAt: z.string(),
@@ -137,8 +143,13 @@ export async function saveProjectLocal(project: MaterialProject) {
 }
 
 export async function loadLatestProject() {
+  const projects = await loadProjectsLocal();
+  return projects[0] ?? null;
+}
+
+export async function loadProjectsLocal() {
   const database = await openDatabase();
-  return new Promise<MaterialProject | null>((resolve, reject) => {
+  return new Promise<MaterialProject[]>((resolve, reject) => {
     const request = database
       .transaction(PROJECT_STORE, "readonly")
       .objectStore(PROJECT_STORE)
@@ -150,11 +161,27 @@ export async function loadLatestProject() {
         .filter((result) => result.success)
         .map((result) => normalizeProject(result.data))
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-      resolve(projects[0] ?? null);
+      resolve(projects);
     };
     request.onerror = () => {
       database.close();
       reject(request.error ?? new Error("Saved projects could not be read."));
+    };
+  });
+}
+
+export async function deleteProjectLocal(projectId: string) {
+  const database = await openDatabase();
+  return new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction(PROJECT_STORE, "readwrite");
+    transaction.objectStore(PROJECT_STORE).delete(projectId);
+    transaction.oncomplete = () => {
+      database.close();
+      resolve();
+    };
+    transaction.onerror = () => {
+      database.close();
+      reject(transaction.error ?? new Error("The material could not be deleted."));
     };
   });
 }
@@ -199,14 +226,19 @@ export async function createMaterialPack(project: MaterialProject) {
   const evaluation = safeProject.sourceTexture
     ? await evaluateSourceTexture(safeProject.sourceTexture, safeProject.mapSettings, resolution)
     : evaluateMaterial(safeProject, resolution);
-  await Promise.all([
-    addTexture(zip, "textures/base-color.png", evaluation.albedo, evaluation.width, evaluation.height),
-    addTexture(zip, "textures/height.png", evaluation.heightMap, evaluation.width, evaluation.height),
-    addTexture(zip, "textures/normal.png", evaluation.normal, evaluation.width, evaluation.height),
-    addTexture(zip, "textures/roughness.png", evaluation.roughness, evaluation.width, evaluation.height),
-    addTexture(zip, "textures/metallic.png", evaluation.metallic, evaluation.width, evaluation.height),
-    addTexture(zip, "textures/ambient-occlusion.png", evaluation.ambientOcclusion, evaluation.width, evaluation.height),
-  ]);
+  const textures = [
+    ["baseColor", "textures/base-color.png", evaluation.albedo],
+    ["height", "textures/height.png", evaluation.heightMap],
+    ["normal", "textures/normal.png", evaluation.normal],
+    ["roughness", "textures/roughness.png", evaluation.roughness],
+    ["metallic", "textures/metallic.png", evaluation.metallic],
+    ["ao", "textures/ambient-occlusion.png", evaluation.ambientOcclusion],
+  ] as const;
+  await Promise.all(
+    textures
+      .filter(([channel]) => safeProject.mapSettings[channel].enabled)
+      .map(([, path, pixels]) => addTexture(zip, path, pixels, evaluation.width, evaluation.height)),
+  );
   if (safeProject.sourceTexture) {
     const extension = safeProject.sourceTexture.mimeType === "image/jpeg"
       ? "jpg"
@@ -231,6 +263,9 @@ export async function createMaterialPack(project: MaterialProject) {
           ambientOcclusion: "linear",
         },
         warnings: evaluation.warnings,
+        enabledMaps: Object.fromEntries(
+          textures.map(([channel]) => [channel, safeProject.mapSettings[channel].enabled]),
+        ),
       },
       null,
       2,

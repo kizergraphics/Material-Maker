@@ -18,7 +18,11 @@ import {
 } from "@babylonjs/core";
 import { useEffect, useRef, useState } from "react";
 import type { MaterialEvaluation } from "../core/material-evaluator";
-import type { PreviewChannel, PreviewShape } from "../core/material-types";
+import type {
+  MapGenerationSettings,
+  PreviewChannel,
+  PreviewShape,
+} from "../core/material-types";
 
 type Props = {
   evaluation: MaterialEvaluation;
@@ -26,6 +30,7 @@ type Props = {
   channel: PreviewChannel;
   showGrid: boolean;
   autoRotate: boolean;
+  mapSettings: MapGenerationSettings;
   className?: string;
 };
 
@@ -87,6 +92,7 @@ export function MaterialPreview({
   channel,
   showGrid,
   autoRotate,
+  mapSettings,
   className,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -263,14 +269,17 @@ export function MaterialPreview({
       normal.dispose();
     } else {
       const pbr = new PBRMaterial("generated-pbr", scene);
-      pbr.albedoTexture = albedo;
-      pbr.bumpTexture = channel === "material" ? normal : null;
+      pbr.albedoTexture = channel !== "material" || mapSettings.baseColor.enabled ? albedo : null;
+      if (channel === "material" && !mapSettings.baseColor.enabled) {
+        pbr.albedoColor = new Color3(0.5, 0.5, 0.5);
+      }
+      pbr.bumpTexture = channel === "material" && mapSettings.normal.enabled ? normal : null;
       if (channel === "material") {
         const packed = new Uint8ClampedArray(evaluation.width * evaluation.height * 4);
         for (let offset = 0; offset < packed.length; offset += 4) {
-          packed[offset] = evaluation.ambientOcclusion[offset];
-          packed[offset + 1] = evaluation.roughness[offset];
-          packed[offset + 2] = evaluation.metallic[offset];
+          packed[offset] = mapSettings.ao.enabled ? evaluation.ambientOcclusion[offset] : 255;
+          packed[offset + 1] = mapSettings.roughness.enabled ? evaluation.roughness[offset] : 153;
+          packed[offset + 2] = mapSettings.metallic.enabled ? evaluation.metallic[offset] : 0;
           packed[offset + 3] = 255;
         }
         pbr.metallicTexture = createTexture(
@@ -285,6 +294,8 @@ export function MaterialPreview({
         pbr.useMetallnessFromMetallicTextureBlue = true;
         pbr.metallic = 1;
         pbr.roughness = 1;
+        if (!mapSettings.baseColor.enabled) albedo.dispose();
+        if (!mapSettings.normal.enabled) normal.dispose();
       } else {
         pbr.metallic = 0;
         pbr.roughness = 0.76;
@@ -300,7 +311,7 @@ export function MaterialPreview({
 
     materialRef.current = material;
     if (meshRef.current) meshRef.current.material = material;
-  }, [evaluation, channel]);
+  }, [evaluation, channel, mapSettings]);
 
   return (
     <div className={`material-preview ${className ?? ""}`}>
@@ -312,6 +323,7 @@ export function MaterialPreview({
       <div className="material-preview__badges" aria-hidden="true">
         <span>256 PREVIEW</span>
         <span>{fps} FPS</span>
+        {channel !== "material" && !mapSettings[channel].enabled ? <span>MAP OFF</span> : null}
       </div>
       <div className="material-preview__hint">Drag to orbit · Scroll to zoom</div>
     </div>

@@ -12,11 +12,16 @@ import {
   RotateCw,
   ShieldCheck,
   Square,
+  Trash2,
   Upload,
 } from "lucide-react";
 import Link from "next/link";
-import { useRef, useState, type ChangeEvent, type DragEvent } from "react";
-import { importMaterialPack } from "../core/material-persistence";
+import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from "react";
+import {
+  deleteProjectLocal,
+  importMaterialPack,
+  loadProjectsLocal,
+} from "../core/material-persistence";
 import { useMaterialEvaluation } from "../core/use-material-evaluation";
 import {
   createStarterProject,
@@ -45,7 +50,25 @@ export function MaterialViewerClient() {
   const [autoRotate, setAutoRotate] = useState(true);
   const [dragging, setDragging] = useState(false);
   const [notice, setNotice] = useState("Example material loaded");
+  const [savedProjects, setSavedProjects] = useState<MaterialProject[]>([]);
   const { evaluation, isGenerating } = useMaterialEvaluation(project, 256);
+
+  useEffect(() => {
+    let active = true;
+    loadProjectsLocal()
+      .then((projects) => {
+        if (!active) return;
+        setSavedProjects(projects);
+        if (projects[0]) {
+          setProject(projects[0]);
+          setNotice(`${projects[0].name} loaded from your library`);
+        }
+      })
+      .catch(() => setNotice("Saved materials are unavailable in this browser"));
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const openFile = async (file: File) => {
     try {
@@ -69,6 +92,29 @@ export function MaterialViewerClient() {
     setDragging(false);
     const file = event.dataTransfer.files[0];
     if (file) void openFile(file);
+  };
+
+  const selectSavedProject = (projectId: string) => {
+    const selected = savedProjects.find((item) => item.id === projectId);
+    if (!selected) return;
+    setProject(selected);
+    setChannel("material");
+    setNotice(`${selected.name} selected`);
+  };
+
+  const deleteSelectedProject = async () => {
+    const selected = savedProjects.find((item) => item.id === project.id);
+    if (!selected || !window.confirm(`Delete “${selected.name}” from this device?`)) return;
+    try {
+      await deleteProjectLocal(selected.id);
+      const remaining = savedProjects.filter((item) => item.id !== selected.id);
+      setSavedProjects(remaining);
+      setProject(remaining[0] ?? createStarterProject());
+      setChannel("material");
+      setNotice(`${selected.name} deleted`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Material could not be deleted");
+    }
   };
 
   return (
@@ -102,6 +148,7 @@ export function MaterialViewerClient() {
           channel={channel}
           showGrid={showGrid}
           autoRotate={autoRotate}
+          mapSettings={project.mapSettings}
           className="material-preview--viewer"
         />
 
@@ -115,7 +162,7 @@ export function MaterialViewerClient() {
 
         <div className="viewer-channel-rail" aria-label="Material channel">
           {channels.map((item) => (
-            <button key={item.id} className={channel === item.id ? "is-active" : ""} onClick={() => setChannel(item.id)}>
+            <button key={item.id} className={`${channel === item.id ? "is-active" : ""}${item.id !== "material" && !project.mapSettings[item.id].enabled ? " is-disabled" : ""}`} onClick={() => setChannel(item.id)}>
               <span />{item.label}
             </button>
           ))}
@@ -138,6 +185,28 @@ export function MaterialViewerClient() {
       </section>
 
       <aside className="viewer-inspector">
+        <section className="viewer-library-picker">
+          <span className="eyebrow">My materials</span>
+          <div>
+            <select
+              aria-label="Choose a saved material"
+              value={savedProjects.some((item) => item.id === project.id) ? project.id : ""}
+              onChange={(event) => selectSavedProject(event.target.value)}
+              disabled={!savedProjects.length}
+            >
+              {!savedProjects.length ? <option value="">No saved materials yet</option> : null}
+              {savedProjects.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select>
+            <button
+              className="icon-button"
+              onClick={() => void deleteSelectedProject()}
+              disabled={!savedProjects.some((item) => item.id === project.id)}
+              aria-label={`Delete ${project.name}`}
+            ><Trash2 size={14} /></button>
+          </div>
+          <p>Saved locally from Material Studio</p>
+        </section>
+
         <div className="viewer-package-card">
           <span className="viewer-package-card__icon"><FileArchive size={19} /></span>
           <div><span>Package</span><strong>{project.name}</strong></div>
@@ -164,14 +233,14 @@ export function MaterialViewerClient() {
           <h2>Maps</h2>
           <div className="viewer-map-list">
             {[
-              ["Base color", "sRGB", "#a88466"],
-              ["Height", "Linear", "#7d7d7d"],
-              ["Normal", "Linear", "#657dce"],
-              ["Roughness", "Linear", "#8d8d8d"],
-              ["Metallic", "Linear", "#d0d0d0"],
-              ["Ambient occlusion", "Linear", "#b8b8b8"],
-            ].map(([label, space, color]) => (
-              <div key={label}><span style={{ background: color }} /><strong>{label}</strong><code>{space}</code></div>
+              ["baseColor", "Base color", "sRGB", "#a88466"],
+              ["height", "Height", "Linear", "#7d7d7d"],
+              ["normal", "Normal", "Linear", "#657dce"],
+              ["roughness", "Roughness", "Linear", "#8d8d8d"],
+              ["metallic", "Metallic", "Linear", "#d0d0d0"],
+              ["ao", "Ambient occlusion", "Linear", "#b8b8b8"],
+            ].map(([id, label, space, color]) => (
+              <div key={id} className={project.mapSettings[id as keyof MaterialProject["mapSettings"]].enabled ? "" : "is-disabled"}><span style={{ background: color }} /><strong>{label}</strong><code>{project.mapSettings[id as keyof MaterialProject["mapSettings"]].enabled ? space : "Off"}</code></div>
             ))}
           </div>
         </section>

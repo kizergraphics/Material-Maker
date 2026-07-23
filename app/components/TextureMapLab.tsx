@@ -69,6 +69,7 @@ function TextureCanvas({
 export function TextureMapWorkbench({
   evaluation,
   source,
+  settings,
   selectedChannel,
   isGenerating,
   error,
@@ -79,6 +80,7 @@ export function TextureMapWorkbench({
 }: {
   evaluation: MaterialEvaluation;
   source: SourceTextureAsset;
+  settings: MapGenerationSettings;
   selectedChannel: PreviewChannel;
   isGenerating: boolean;
   error: string | null;
@@ -123,8 +125,9 @@ export function TextureMapWorkbench({
         {textureChannels.map((item) => (
           <button
             key={item.id}
-            className={`map-card${selectedChannel === item.id ? " is-selected" : ""}`}
+            className={`map-card${selectedChannel === item.id ? " is-selected" : ""}${settings[item.id].enabled ? "" : " is-disabled"}`}
             onClick={() => onSelectChannel(item.id)}
+            aria-label={`${item.label} map, ${settings[item.id].enabled ? "enabled" : "disabled"}`}
           >
             <span className="map-card__image">
               <TextureCanvas evaluation={evaluation} channel={item.id} />
@@ -132,7 +135,7 @@ export function TextureMapWorkbench({
             </span>
             <span className="map-card__copy">
               <strong>{item.label}</strong>
-              <em>{item.description}</em>
+              <em>{settings[item.id].enabled ? item.description : "Disabled for this material"}</em>
             </span>
             <SlidersHorizontal size={14} />
           </button>
@@ -276,6 +279,7 @@ export function TextureMapInspector({
 
       {channel === "baseColor" ? (
         <>
+          <ToggleField label="Use this map" checked={settings.baseColor.enabled} onChange={(value) => update("baseColor", "enabled", value)} />
           <MapRangeField label="Brightness" value={settings.baseColor.brightness} min={-0.5} max={0.5} step={0.01} onChange={(value) => update("baseColor", "brightness", value)} />
           <MapRangeField label="Contrast" value={settings.baseColor.contrast} min={0.2} max={2.5} step={0.01} onChange={(value) => update("baseColor", "contrast", value)} />
           <MapRangeField label="Saturation" value={settings.baseColor.saturation} min={0} max={2} step={0.01} onChange={(value) => update("baseColor", "saturation", value)} />
@@ -285,6 +289,7 @@ export function TextureMapInspector({
 
       {channel === "height" ? (
         <>
+          <ToggleField label="Use this map" checked={settings.height.enabled} onChange={(value) => update("height", "enabled", value)} />
           <MapRangeField label="Contrast" value={settings.height.contrast} min={0.1} max={3} step={0.01} onChange={(value) => update("height", "contrast", value)} />
           <MapRangeField label="Midpoint" value={settings.height.bias} min={-0.5} max={0.5} step={0.01} onChange={(value) => update("height", "bias", value)} />
           <MapRangeField label="Blur" value={settings.height.blur} min={0} max={8} step={1} suffix="px" onChange={(value) => update("height", "blur", value)} />
@@ -294,6 +299,7 @@ export function TextureMapInspector({
 
       {channel === "normal" ? (
         <>
+          <ToggleField label="Use this map" checked={settings.normal.enabled} onChange={(value) => update("normal", "enabled", value)} />
           <MapRangeField label="Strength" value={settings.normal.strength} min={0} max={8} step={0.01} onChange={(value) => update("normal", "strength", value)} />
           <MapRangeField label="Detail" value={settings.normal.detail} min={0.25} max={4} step={0.01} onChange={(value) => update("normal", "detail", value)} />
           <ToggleField label="Flip green / Y" checked={settings.normal.invertY} onChange={(value) => update("normal", "invertY", value)} />
@@ -302,6 +308,7 @@ export function TextureMapInspector({
 
       {channel === "roughness" ? (
         <>
+          <ToggleField label="Use this map" checked={settings.roughness.enabled} onChange={(value) => update("roughness", "enabled", value)} />
           <MapRangeField label="Base value" value={settings.roughness.base} min={0} max={1} step={0.01} onChange={(value) => update("roughness", "base", value)} />
           <MapRangeField label="Variation" value={settings.roughness.variation} min={-1.5} max={1.5} step={0.01} onChange={(value) => update("roughness", "variation", value)} />
           <ToggleField label="Invert roughness" checked={settings.roughness.invert} onChange={(value) => update("roughness", "invert", value)} />
@@ -310,6 +317,7 @@ export function TextureMapInspector({
 
       {channel === "metallic" ? (
         <>
+          <ToggleField label="Use this map" checked={settings.metallic.enabled} onChange={(value) => update("metallic", "enabled", value)} />
           <MapRangeField label="Base value" value={settings.metallic.base} min={0} max={1} step={0.01} onChange={(value) => update("metallic", "base", value)} />
           <MapRangeField label="Variation" value={settings.metallic.variation} min={-1.5} max={1.5} step={0.01} onChange={(value) => update("metallic", "variation", value)} />
           <ToggleField label="Invert metallic" checked={settings.metallic.invert} onChange={(value) => update("metallic", "invert", value)} />
@@ -319,6 +327,7 @@ export function TextureMapInspector({
 
       {channel === "ao" ? (
         <>
+          <ToggleField label="Use this map" checked={settings.ao.enabled} onChange={(value) => update("ao", "enabled", value)} />
           <MapRangeField label="Strength" value={settings.ao.strength} min={0} max={4} step={0.01} onChange={(value) => update("ao", "strength", value)} />
           <MapRangeField label="Radius" value={settings.ao.radius} min={1} max={16} step={1} suffix="px" onChange={(value) => update("ao", "radius", value)} />
           <MapRangeField label="Lift" value={settings.ao.bias} min={-0.3} max={0.3} step={0.01} onChange={(value) => update("ao", "bias", value)} />

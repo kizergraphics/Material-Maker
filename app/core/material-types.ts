@@ -1,6 +1,6 @@
 import type { Edge, Node } from "@xyflow/react";
 
-export const PROJECT_SCHEMA_VERSION = 2 as const;
+export const PROJECT_SCHEMA_VERSION = 3 as const;
 
 export type MaterialNodeKind =
   | "color"
@@ -35,33 +35,39 @@ export interface SourceTextureAsset {
 
 export interface MapGenerationSettings {
   baseColor: {
+    enabled: boolean;
     brightness: number;
     contrast: number;
     saturation: number;
     hue: number;
   };
   height: {
+    enabled: boolean;
     contrast: number;
     bias: number;
     blur: number;
     invert: boolean;
   };
   normal: {
+    enabled: boolean;
     strength: number;
     detail: number;
     invertY: boolean;
   };
   roughness: {
+    enabled: boolean;
     base: number;
     variation: number;
     invert: boolean;
   };
   metallic: {
+    enabled: boolean;
     base: number;
     variation: number;
     invert: boolean;
   };
   ao: {
+    enabled: boolean;
     strength: number;
     radius: number;
     bias: number;
@@ -71,12 +77,12 @@ export interface MapGenerationSettings {
 export type ExportResolution = 512 | 1024 | 2048;
 
 export const DEFAULT_MAP_SETTINGS: MapGenerationSettings = {
-  baseColor: { brightness: 0, contrast: 1, saturation: 1, hue: 0 },
-  height: { contrast: 1.18, bias: 0, blur: 1, invert: false },
-  normal: { strength: 2.2, detail: 1, invertY: false },
-  roughness: { base: 0.62, variation: 0.34, invert: false },
-  metallic: { base: 0, variation: 0, invert: false },
-  ao: { strength: 1.2, radius: 4, bias: 0 },
+  baseColor: { enabled: true, brightness: 0, contrast: 1, saturation: 1, hue: 0 },
+  height: { enabled: true, contrast: 1.18, bias: 0, blur: 1, invert: false },
+  normal: { enabled: true, strength: 2.2, detail: 1, invertY: false },
+  roughness: { enabled: true, base: 0.62, variation: 0.34, invert: false },
+  metallic: { enabled: true, base: 0, variation: 0, invert: false },
+  ao: { enabled: true, strength: 1.2, radius: 4, bias: 0 },
 };
 
 export type NodeValueMap = {

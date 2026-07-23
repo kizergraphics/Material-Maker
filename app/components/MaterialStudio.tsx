@@ -36,6 +36,7 @@ import {
   SlidersHorizontal,
   Sparkles,
   Square,
+  Trash2,
   Undo2,
   Upload,
   WandSparkles,
@@ -52,9 +53,10 @@ import {
 } from "react";
 import {
   createMaterialPack,
+  deleteProjectLocal,
   downloadBlob,
   importMaterialPack,
-  loadLatestProject,
+  loadProjectsLocal,
   saveProjectLocal,
 } from "../core/material-persistence";
 import { useMaterialStore } from "../core/material-store";
@@ -64,6 +66,7 @@ import {
   NODE_LIBRARY,
   type MaterialGraphNode,
   type MaterialNodeKind,
+  type MaterialProject,
   type NodeValueMap,
   type PreviewChannel,
   type PreviewShape,
@@ -288,7 +291,9 @@ function StudioWorkspace() {
   const [isCompactMenuOpen, setCompactMenuOpen] = useState(false);
   const [rendererLabel, setRendererLabel] = useState("WebGL2 renderer");
   const [workspaceView, setWorkspaceView] = useState<"graph" | "maps">("graph");
+  const [savedProjects, setSavedProjects] = useState<MaterialProject[]>([]);
 
+  const projectId = useMaterialStore((state) => state.projectId);
   const projectName = useMaterialStore((state) => state.projectName);
   const nodes = useMaterialStore((state) => state.nodes);
   const edges = useMaterialStore((state) => state.edges);
@@ -344,10 +349,11 @@ function StudioWorkspace() {
   useEffect(() => {
     let active = true;
     if ("gpu" in navigator) setRendererLabel("WebGPU available");
-    loadLatestProject()
-      .then((project) => {
+    loadProjectsLocal()
+      .then((projects) => {
         if (!active) return;
-        if (project) replaceProject(project);
+        setSavedProjects(projects);
+        if (projects[0]) replaceProject(projects[0]);
         setHydrated(true);
         setSaveState("saved");
       })
@@ -371,7 +377,10 @@ function StudioWorkspace() {
     setSaveState("saving");
     const timeout = window.setTimeout(() => {
       saveProjectLocal(useMaterialStore.getState().toProject())
-        .then(() => setSaveState("saved"))
+        .then(async () => {
+          setSaveState("saved");
+          setSavedProjects(await loadProjectsLocal());
+        })
         .catch(() => setSaveState("error"));
     }, 700);
     return () => window.clearTimeout(timeout);
@@ -393,8 +402,9 @@ function StudioWorkspace() {
         event.preventDefault();
         setSaveState("saving");
         saveProjectLocal(useMaterialStore.getState().toProject())
-          .then(() => {
+          .then(async () => {
             setSaveState("saved");
+            setSavedProjects(await loadProjectsLocal());
             setNotice("Project saved locally");
           })
           .catch(() => setSaveState("error"));
@@ -420,6 +430,17 @@ function StudioWorkspace() {
       setNotice(error instanceof Error ? error.message : "Export failed");
     } finally {
       setExporting(false);
+    }
+  }, []);
+
+  const openViewer = useCallback(async () => {
+    setSaveState("saving");
+    try {
+      await saveProjectLocal(useMaterialStore.getState().toProject());
+      window.location.assign("/viewer");
+    } catch {
+      setSaveState("error");
+      setNotice("Save this material before opening the viewer");
     }
   }, []);
 
@@ -462,6 +483,23 @@ function StudioWorkspace() {
     });
   };
 
+  const openSavedProject = (project: MaterialProject) => {
+    replaceProject(project);
+    setNotice(`${project.name} opened`);
+  };
+
+  const deleteSavedProject = async (project: MaterialProject) => {
+    if (!window.confirm(`Delete “${project.name}” from this device?`)) return;
+    try {
+      await deleteProjectLocal(project.id);
+      setSavedProjects((projects) => projects.filter((item) => item.id !== project.id));
+      if (project.id === projectId) newProject();
+      setNotice(`${project.name} deleted`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Material could not be deleted");
+    }
+  };
+
   const saveLabel =
     saveState === "saved"
       ? "Saved locally"
@@ -484,7 +522,7 @@ function StudioWorkspace() {
 
         <nav className="studio-nav" aria-label="Primary navigation">
           <Link href="/" className="is-active">Studio</Link>
-          <Link href="/viewer">Viewer</Link>
+          <Link href="/viewer" onClick={(event) => { event.preventDefault(); void openViewer(); }}>Viewer</Link>
         </nav>
 
         <div className="studio-header__actions">
@@ -527,7 +565,7 @@ function StudioWorkspace() {
           <div className="compact-menu">
             <button onClick={() => fileInputRef.current?.click()}><Upload size={14} /> Import package</button>
             <button onClick={handleExport}><Download size={14} /> Export package</button>
-            <Link href="/viewer"><MonitorUp size={14} /> Open viewer</Link>
+            <Link href="/viewer" onClick={(event) => { event.preventDefault(); void openViewer(); }}><MonitorUp size={14} /> Open viewer</Link>
           </div>
         ) : null}
       </header>
@@ -576,6 +614,24 @@ function StudioWorkspace() {
               <span>Active · PBR metal/rough</span>
             </div>
             <Check size={14} />
+          </div>
+
+          <div className="library-section-heading saved-material-heading">
+            <span>Saved materials</span>
+            <span>{savedProjects.length}</span>
+          </div>
+          <div className="saved-material-list" aria-label="Saved materials">
+            {savedProjects.length ? savedProjects.map((project) => (
+              <div key={project.id} className={project.id === projectId ? "is-active" : ""}>
+                <button onClick={() => openSavedProject(project)}>
+                  <span className="saved-material-swatch" aria-hidden="true" />
+                  <span><strong>{project.name}</strong><em>{project.sourceTexture ? "Image material" : "Graph material"}</em></span>
+                </button>
+                <button className="saved-material-delete" onClick={() => void deleteSavedProject(project)} aria-label={`Delete ${project.name}`}>
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            )) : <p>Create a material and it will appear here.</p>}
           </div>
 
           {sourceTexture ? (
@@ -636,6 +692,7 @@ function StudioWorkspace() {
           <TextureMapWorkbench
             evaluation={evaluation}
             source={sourceTexture}
+            settings={mapSettings}
             selectedChannel={preview.channel}
             isGenerating={isGenerating}
             error={generationError}
@@ -715,13 +772,14 @@ function StudioWorkspace() {
             channel={preview.channel}
             showGrid={preview.showGrid}
             autoRotate={preview.autoRotate}
+            mapSettings={mapSettings}
           />
 
           <div className="channel-tabs" aria-label="Preview channel">
             {channelLabels.map((item) => (
               <button
                 key={item.id}
-                className={preview.channel === item.id ? "is-active" : ""}
+                className={`${preview.channel === item.id ? "is-active" : ""}${item.id !== "material" && !mapSettings[item.id].enabled ? " is-disabled" : ""}`}
                 onClick={() => setChannel(item.id)}
               >{item.label}</button>
             ))}
