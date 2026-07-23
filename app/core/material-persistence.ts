@@ -2,17 +2,55 @@ import JSZip from "jszip";
 import { z } from "zod";
 import { canvasToBlob, evaluateMaterial, pixelsToCanvas } from "./material-evaluator";
 import {
+  DEFAULT_MAP_SETTINGS,
   PROJECT_SCHEMA_VERSION,
   type MaterialPackManifest,
   type MaterialProject,
 } from "./material-types";
+import { evaluateSourceTexture } from "./texture-generator";
 
 const DB_NAME = "forge-material-studio";
 const DB_VERSION = 1;
 const PROJECT_STORE = "projects";
 
+const finiteNumber = z.number().finite();
+const mapSettingsSchema = z.object({
+  baseColor: z.object({
+    brightness: finiteNumber,
+    contrast: finiteNumber,
+    saturation: finiteNumber,
+    hue: finiteNumber,
+  }).partial().optional(),
+  height: z.object({
+    contrast: finiteNumber,
+    bias: finiteNumber,
+    blur: finiteNumber,
+    invert: z.boolean(),
+  }).partial().optional(),
+  normal: z.object({
+    strength: finiteNumber,
+    detail: finiteNumber,
+    invertY: z.boolean(),
+  }).partial().optional(),
+  roughness: z.object({
+    base: finiteNumber,
+    variation: finiteNumber,
+    invert: z.boolean(),
+  }).partial().optional(),
+  metallic: z.object({
+    base: finiteNumber,
+    variation: finiteNumber,
+    invert: z.boolean(),
+  }).partial().optional(),
+  ao: z.object({
+    strength: finiteNumber,
+    radius: finiteNumber,
+    bias: finiteNumber,
+  }).partial().optional(),
+}).partial();
+
 const projectSchema = z.object({
-  schemaVersion: z.literal(PROJECT_SCHEMA_VERSION),
+  schemaVersion: z.union([z.literal(1), z.literal(PROJECT_SCHEMA_VERSION)]),
   id: z.string().min(1).max(128),
   name: z.string().min(1).max(160),
   createdAt: z.string(),
@@ -24,15 +62,48 @@ const projectSchema = z.object({
     channel: z.enum([
       "material",
       "baseColor",
+      "height",
       "normal",
       "roughness",
       "metallic",
+      "ao",
     ]),
     showGrid: z.boolean(),
     autoRotate: z.boolean(),
     tiled: z.boolean(),
   }),
+  sourceTexture: z
+    .object({
+      name: z.string().max(240),
+      mimeType: z.enum(["image/png", "image/jpeg", "image/webp"]),
+      dataUrl: z.string(),
+      width: z.number().int().positive().max(16384),
+      height: z.number().int().positive().max(16384),
+      sizeBytes: z.number().nonnegative(),
+    })
+    .nullable()
+    .optional(),
+  mapSettings: mapSettingsSchema.optional(),
+  exportResolution: z.union([z.literal(512), z.literal(1024), z.literal(2048)]).optional(),
 });
+
+function normalizeProject(value: z.infer<typeof projectSchema>): MaterialProject {
+  const supplied = value.mapSettings as Partial<typeof DEFAULT_MAP_SETTINGS> | undefined;
+  return {
+    ...value,
+    schemaVersion: PROJECT_SCHEMA_VERSION,
+    sourceTexture: value.sourceTexture ?? null,
+    mapSettings: {
+      baseColor: { ...DEFAULT_MAP_SETTINGS.baseColor, ...supplied?.baseColor },
+      height: { ...DEFAULT_MAP_SETTINGS.height, ...supplied?.height },
+      normal: { ...DEFAULT_MAP_SETTINGS.normal, ...supplied?.normal },
+      roughness: { ...DEFAULT_MAP_SETTINGS.roughness, ...supplied?.roughness },
+      metallic: { ...DEFAULT_MAP_SETTINGS.metallic, ...supplied?.metallic },
+      ao: { ...DEFAULT_MAP_SETTINGS.ao, ...supplied?.ao },
+    },
+    exportResolution: value.exportResolution ?? 1024,
+  } as MaterialProject;
+}
 
 function openDatabase() {
   return new Promise<IDBDatabase>((resolve, reject) => {
@@ -77,7 +148,7 @@ export async function loadLatestProject() {
       const projects = request.result
         .map((value) => projectSchema.safeParse(value))
         .filter((result) => result.success)
-        .map((result) => result.data as MaterialProject)
+        .map((result) => normalizeProject(result.data))
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
       resolve(projects[0] ?? null);
     };
@@ -99,9 +170,10 @@ async function addTexture(
   zip: JSZip,
   path: string,
   pixels: Uint8ClampedArray,
-  size: number,
+  width: number,
+  height: number,
 ) {
-  const canvas = pixelsToCanvas(pixels, size, size);
+  const canvas = pixelsToCanvas(pixels, width, height);
   zip.file(path, await canvasToBlob(canvas));
 }
 
@@ -123,24 +195,40 @@ export async function createMaterialPack(project: MaterialProject) {
   zip.file("manifest.json", JSON.stringify(manifest, null, 2));
   zip.file("material.json", JSON.stringify(safeProject, null, 2));
 
-  const evaluation = evaluateMaterial(safeProject, 512);
+  const resolution = safeProject.exportResolution;
+  const evaluation = safeProject.sourceTexture
+    ? await evaluateSourceTexture(safeProject.sourceTexture, safeProject.mapSettings, resolution)
+    : evaluateMaterial(safeProject, resolution);
   await Promise.all([
-    addTexture(zip, "textures/base-color.png", evaluation.albedo, 512),
-    addTexture(zip, "textures/normal.png", evaluation.normal, 512),
-    addTexture(zip, "textures/roughness.png", evaluation.roughness, 512),
-    addTexture(zip, "textures/metallic.png", evaluation.metallic, 512),
+    addTexture(zip, "textures/base-color.png", evaluation.albedo, evaluation.width, evaluation.height),
+    addTexture(zip, "textures/height.png", evaluation.heightMap, evaluation.width, evaluation.height),
+    addTexture(zip, "textures/normal.png", evaluation.normal, evaluation.width, evaluation.height),
+    addTexture(zip, "textures/roughness.png", evaluation.roughness, evaluation.width, evaluation.height),
+    addTexture(zip, "textures/metallic.png", evaluation.metallic, evaluation.width, evaluation.height),
+    addTexture(zip, "textures/ambient-occlusion.png", evaluation.ambientOcclusion, evaluation.width, evaluation.height),
   ]);
+  if (safeProject.sourceTexture) {
+    const extension = safeProject.sourceTexture.mimeType === "image/jpeg"
+      ? "jpg"
+      : safeProject.sourceTexture.mimeType.split("/")[1];
+    zip.file(
+      `source/albedo-original.${extension}`,
+      await (await fetch(safeProject.sourceTexture.dataUrl)).blob(),
+    );
+  }
   zip.file(
     "export-report.json",
     JSON.stringify(
       {
         generatedAt: safeProject.updatedAt,
-        resolution: 512,
+        resolution: { width: evaluation.width, height: evaluation.height },
         colorSpace: {
           baseColor: "sRGB",
+          height: "linear",
           normal: "linear",
           roughness: "linear",
           metallic: "linear",
+          ambientOcclusion: "linear",
         },
         warnings: evaluation.warnings,
       },
@@ -194,5 +282,5 @@ export async function importMaterialPack(file: File) {
   if (!projectResult.success) {
     throw new Error("The material graph is invalid or uses an unsupported schema.");
   }
-  return projectResult.data as MaterialProject;
+  return normalizeProject(projectResult.data);
 }

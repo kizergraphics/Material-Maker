@@ -1,6 +1,6 @@
 import type { Edge, Node } from "@xyflow/react";
 
-export const PROJECT_SCHEMA_VERSION = 1 as const;
+export const PROJECT_SCHEMA_VERSION = 2 as const;
 
 export type MaterialNodeKind =
   | "color"
@@ -16,9 +16,68 @@ export type PreviewShape = "sphere" | "cube" | "plane";
 export type PreviewChannel =
   | "material"
   | "baseColor"
+  | "height"
   | "normal"
   | "roughness"
-  | "metallic";
+  | "metallic"
+  | "ao";
+
+export type TextureMapChannel = Exclude<PreviewChannel, "material">;
+
+export interface SourceTextureAsset {
+  name: string;
+  mimeType: "image/png" | "image/jpeg" | "image/webp";
+  dataUrl: string;
+  width: number;
+  height: number;
+  sizeBytes: number;
+}
+
+export interface MapGenerationSettings {
+  baseColor: {
+    brightness: number;
+    contrast: number;
+    saturation: number;
+    hue: number;
+  };
+  height: {
+    contrast: number;
+    bias: number;
+    blur: number;
+    invert: boolean;
+  };
+  normal: {
+    strength: number;
+    detail: number;
+    invertY: boolean;
+  };
+  roughness: {
+    base: number;
+    variation: number;
+    invert: boolean;
+  };
+  metallic: {
+    base: number;
+    variation: number;
+    invert: boolean;
+  };
+  ao: {
+    strength: number;
+    radius: number;
+    bias: number;
+  };
+}
+
+export type ExportResolution = 512 | 1024 | 2048;
+
+export const DEFAULT_MAP_SETTINGS: MapGenerationSettings = {
+  baseColor: { brightness: 0, contrast: 1, saturation: 1, hue: 0 },
+  height: { contrast: 1.18, bias: 0, blur: 1, invert: false },
+  normal: { strength: 2.2, detail: 1, invertY: false },
+  roughness: { base: 0.62, variation: 0.34, invert: false },
+  metallic: { base: 0, variation: 0, invert: false },
+  ao: { strength: 1.2, radius: 4, bias: 0 },
+};
 
 export type NodeValueMap = {
   color?: string;
@@ -60,6 +119,9 @@ export interface MaterialProject {
   nodes: MaterialGraphNode[];
   edges: MaterialGraphEdge[];
   preview: PreviewSettings;
+  sourceTexture: SourceTextureAsset | null;
+  mapSettings: MapGenerationSettings;
+  exportResolution: ExportResolution;
 }
 
 export interface MaterialPackManifest {
@@ -298,5 +360,8 @@ export function createStarterProject(): MaterialProject {
       autoRotate: true,
       tiled: true,
     },
+    sourceTexture: null,
+    mapSettings: structuredClone(DEFAULT_MAP_SETTINGS),
+    exportResolution: 1024,
   };
 }

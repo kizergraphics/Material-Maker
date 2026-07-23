@@ -15,9 +15,9 @@ import {
   Upload,
 } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
-import { evaluateMaterial } from "../core/material-evaluator";
+import { useRef, useState, type ChangeEvent, type DragEvent } from "react";
 import { importMaterialPack } from "../core/material-persistence";
+import { useMaterialEvaluation } from "../core/use-material-evaluation";
 import {
   createStarterProject,
   type MaterialProject,
@@ -29,9 +29,11 @@ import { MaterialPreview } from "./MaterialPreview";
 const channels: Array<{ id: PreviewChannel; label: string }> = [
   { id: "material", label: "Beauty" },
   { id: "baseColor", label: "Base color" },
+  { id: "height", label: "Height" },
   { id: "normal", label: "Normal" },
   { id: "roughness", label: "Roughness" },
   { id: "metallic", label: "Metallic" },
+  { id: "ao", label: "AO" },
 ];
 
 export function MaterialViewerClient() {
@@ -43,10 +45,7 @@ export function MaterialViewerClient() {
   const [autoRotate, setAutoRotate] = useState(true);
   const [dragging, setDragging] = useState(false);
   const [notice, setNotice] = useState("Example material loaded");
-  const evaluation = useMemo(
-    () => evaluateMaterial(project, 96),
-    [project],
-  );
+  const { evaluation, isGenerating } = useMaterialEvaluation(project, 256);
 
   const openFile = async (file: File) => {
     try {
@@ -98,8 +97,7 @@ export function MaterialViewerClient() {
 
       <section className="viewer-stage">
         <MaterialPreview
-          nodes={project.nodes}
-          edges={project.edges}
+          evaluation={evaluation}
           shape={shape}
           channel={channel}
           showGrid={showGrid}
@@ -112,7 +110,7 @@ export function MaterialViewerClient() {
             <span className="eyebrow">Local material package</span>
             <h1>{project.name}</h1>
           </div>
-          <span className="viewer-status"><Check size={13} /> Ready to inspect</span>
+          <span className="viewer-status"><Check size={13} /> {isGenerating ? "Generating maps" : "Ready to inspect"}</span>
         </div>
 
         <div className="viewer-channel-rail" aria-label="Material channel">
@@ -167,9 +165,11 @@ export function MaterialViewerClient() {
           <div className="viewer-map-list">
             {[
               ["Base color", "sRGB", "#a88466"],
+              ["Height", "Linear", "#7d7d7d"],
               ["Normal", "Linear", "#657dce"],
               ["Roughness", "Linear", "#8d8d8d"],
               ["Metallic", "Linear", "#d0d0d0"],
+              ["Ambient occlusion", "Linear", "#b8b8b8"],
             ].map(([label, space, color]) => (
               <div key={label}><span style={{ background: color }} /><strong>{label}</strong><code>{space}</code></div>
             ))}

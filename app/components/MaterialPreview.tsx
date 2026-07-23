@@ -16,18 +16,12 @@ import {
   Texture,
   Vector3,
 } from "@babylonjs/core";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { evaluateMaterial } from "../core/material-evaluator";
-import type {
-  MaterialGraphEdge,
-  MaterialGraphNode,
-  PreviewChannel,
-  PreviewShape,
-} from "../core/material-types";
+import { useEffect, useRef, useState } from "react";
+import type { MaterialEvaluation } from "../core/material-evaluator";
+import type { PreviewChannel, PreviewShape } from "../core/material-types";
 
 type Props = {
-  nodes: MaterialGraphNode[];
-  edges: MaterialGraphEdge[];
+  evaluation: MaterialEvaluation;
   shape: PreviewShape;
   channel: PreviewChannel;
   showGrid: boolean;
@@ -65,18 +59,19 @@ function createTexture(
   scene: Scene,
   name: string,
   pixels: Uint8ClampedArray,
-  size: number,
+  width: number,
+  height: number,
 ) {
   const texture = new DynamicTexture(
     name,
-    { width: size, height: size },
+    { width, height },
     scene,
     false,
     Texture.TRILINEAR_SAMPLINGMODE,
   );
   const context = texture.getContext();
   context.putImageData(
-    new ImageData(new Uint8ClampedArray(pixels), size, size),
+    new ImageData(new Uint8ClampedArray(pixels), width, height),
     0,
     0,
   );
@@ -87,8 +82,7 @@ function createTexture(
 }
 
 export function MaterialPreview({
-  nodes,
-  edges,
+  evaluation,
   shape,
   channel,
   showGrid,
@@ -103,11 +97,6 @@ export function MaterialPreview({
   const materialRef = useRef<PBRMaterial | StandardMaterial | null>(null);
   const autoRotateRef = useRef(autoRotate);
   const [fps, setFps] = useState(60);
-
-  const evaluation = useMemo(
-    () => evaluateMaterial({ nodes, edges }, 256),
-    [nodes, edges],
-  );
 
   useEffect(() => {
     autoRotateRef.current = autoRotate;
@@ -227,12 +216,14 @@ export function MaterialPreview({
       "generated-albedo",
       evaluation.albedo,
       evaluation.width,
+      evaluation.height,
     );
     const normal = createTexture(
       scene,
       "generated-normal",
       evaluation.normal,
       evaluation.width,
+      evaluation.height,
     );
 
     let material: PBRMaterial | StandardMaterial;
@@ -243,14 +234,25 @@ export function MaterialPreview({
       diagnostic.emissiveColor = Color3.White();
       material = diagnostic;
       albedo.dispose();
-    } else if (channel === "roughness" || channel === "metallic") {
-      const pixels =
-        channel === "roughness" ? evaluation.roughness : evaluation.metallic;
+    } else if (
+      channel === "height" ||
+      channel === "roughness" ||
+      channel === "metallic" ||
+      channel === "ao"
+    ) {
+      const pixels = channel === "height"
+        ? evaluation.heightMap
+        : channel === "roughness"
+          ? evaluation.roughness
+          : channel === "metallic"
+            ? evaluation.metallic
+            : evaluation.ambientOcclusion;
       const diagnosticTexture = createTexture(
         scene,
         `${channel}-diagnostic`,
         pixels,
         evaluation.width,
+        evaluation.height,
       );
       const diagnostic = new StandardMaterial(`${channel}-diagnostic`, scene);
       diagnostic.disableLighting = true;
@@ -263,8 +265,30 @@ export function MaterialPreview({
       const pbr = new PBRMaterial("generated-pbr", scene);
       pbr.albedoTexture = albedo;
       pbr.bumpTexture = channel === "material" ? normal : null;
-      pbr.metallic = channel === "material" ? evaluation.metallicValue : 0;
-      pbr.roughness = channel === "material" ? evaluation.roughnessValue : 0.76;
+      if (channel === "material") {
+        const packed = new Uint8ClampedArray(evaluation.width * evaluation.height * 4);
+        for (let offset = 0; offset < packed.length; offset += 4) {
+          packed[offset] = evaluation.ambientOcclusion[offset];
+          packed[offset + 1] = evaluation.roughness[offset];
+          packed[offset + 2] = evaluation.metallic[offset];
+          packed[offset + 3] = 255;
+        }
+        pbr.metallicTexture = createTexture(
+          scene,
+          "generated-orm",
+          packed,
+          evaluation.width,
+          evaluation.height,
+        );
+        pbr.useAmbientOcclusionFromMetallicTextureRed = true;
+        pbr.useRoughnessFromMetallicTextureGreen = true;
+        pbr.useMetallnessFromMetallicTextureBlue = true;
+        pbr.metallic = 1;
+        pbr.roughness = 1;
+      } else {
+        pbr.metallic = 0;
+        pbr.roughness = 0.76;
+      }
       pbr.environmentIntensity = 0.9;
       pbr.metallicF0Factor = 0.88;
       pbr.clearCoat.isEnabled = channel === "material";

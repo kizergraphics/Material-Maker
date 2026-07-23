@@ -10,9 +10,11 @@ export interface MaterialEvaluation {
   width: number;
   height: number;
   albedo: Uint8ClampedArray;
+  heightMap: Uint8ClampedArray;
   normal: Uint8ClampedArray;
   roughness: Uint8ClampedArray;
   metallic: Uint8ClampedArray;
+  ambientOcclusion: Uint8ClampedArray;
   roughnessValue: number;
   metallicValue: number;
   warnings: string[];
@@ -229,9 +231,11 @@ export function evaluateMaterial(
   );
 
   const albedo = new Uint8ClampedArray(size * size * 4);
+  const heightMap = new Uint8ClampedArray(size * size * 4);
   const normal = new Uint8ClampedArray(size * size * 4);
   const roughness = new Uint8ClampedArray(size * size * 4);
   const metallic = new Uint8ClampedArray(size * size * 4);
+  const ambientOcclusion = new Uint8ClampedArray(size * size * 4);
   const step = 1 / size;
   const normalNode = normalSource ? nodes.get(normalSource) : undefined;
   const heightSource =
@@ -287,6 +291,14 @@ export function evaluateMaterial(
         project.edges,
         new Set(),
       )[0];
+      const heightValue = evaluateNode(
+        heightSource,
+        u,
+        v,
+        nodes,
+        project.edges,
+        new Set(),
+      )[0];
       let nx = (heightL - heightR) * normalStrength * 2;
       let ny = (heightD - heightU) * normalStrength * 2;
       let nz = 1;
@@ -294,9 +306,14 @@ export function evaluateMaterial(
       nx /= length;
       ny /= length;
       nz /= length;
+      const occlusion = clamp(
+        1 - Math.max(0, (heightL + heightR + heightD + heightU) * 0.25 - heightValue) * 2.5,
+      );
+      writePixel(heightMap, offset, [heightValue, heightValue, heightValue, 1]);
       writePixel(normal, offset, [nx * 0.5 + 0.5, ny * 0.5 + 0.5, nz, 1]);
       writePixel(roughness, offset, [roughnessValue, roughnessValue, roughnessValue, 1]);
       writePixel(metallic, offset, [metallicValue, metallicValue, metallicValue, 1]);
+      writePixel(ambientOcclusion, offset, [occlusion, occlusion, occlusion, 1]);
     }
   }
 
@@ -304,9 +321,11 @@ export function evaluateMaterial(
     width: size,
     height: size,
     albedo,
+    heightMap,
     normal,
     roughness,
     metallic,
+    ambientOcclusion,
     roughnessValue,
     metallicValue,
     warnings,

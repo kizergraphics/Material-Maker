@@ -33,6 +33,8 @@ test("server-renders the material studio shell", async () => {
   assert.match(html, /Material Studio/);
   assert.match(html, /Bake &amp; export/);
   assert.match(html, /Node library/);
+  assert.match(html, /Add albedo texture/);
+  assert.match(html, /Generate 6 editable PBR maps/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/i);
 });
 
@@ -44,6 +46,7 @@ test("server-renders the no-upload web viewer", async () => {
   assert.match(html, /No files are uploaded/);
   assert.match(html, /Open \.mmpack/);
   assert.match(html, /Private by design/);
+  assert.match(html, /Ambient occlusion/);
 });
 
 test("keeps persistence local and removes the starter preview", async () => {
@@ -53,6 +56,8 @@ test("keeps persistence local and removes the starter preview", async () => {
   ]);
   assert.match(persistence, /indexedDB\.open/);
   assert.match(persistence, /privacy:\s*"local-only"/);
+  assert.match(persistence, /textures\/height\.png/);
+  assert.match(persistence, /textures\/ambient-occlusion\.png/);
   assert.match(hosting, /"d1": null/);
   assert.match(hosting, /"r2": null/);
   await assert.rejects(access(new URL("app/_sites-preview", projectRoot)));

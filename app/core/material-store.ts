@@ -11,6 +11,7 @@ import {
 } from "@xyflow/react";
 import { create } from "zustand";
 import {
+  DEFAULT_MAP_SETTINGS,
   NODE_LIBRARY,
   PROJECT_SCHEMA_VERSION,
   createStarterProject,
@@ -18,16 +19,22 @@ import {
   type MaterialGraphNode,
   type MaterialNodeKind,
   type MaterialProject,
+  type MapGenerationSettings,
   type NodeValueMap,
+  type ExportResolution,
   type PreviewChannel,
   type PreviewSettings,
   type PreviewShape,
+  type SourceTextureAsset,
 } from "./material-types";
 
 type Snapshot = {
   nodes: MaterialGraphNode[];
   edges: MaterialGraphEdge[];
   preview: PreviewSettings;
+  sourceTexture: SourceTextureAsset | null;
+  mapSettings: MapGenerationSettings;
+  exportResolution: ExportResolution;
 };
 
 type MaterialStore = {
@@ -37,6 +44,9 @@ type MaterialStore = {
   nodes: MaterialGraphNode[];
   edges: MaterialGraphEdge[];
   preview: PreviewSettings;
+  sourceTexture: SourceTextureAsset | null;
+  mapSettings: MapGenerationSettings;
+  exportResolution: ExportResolution;
   selectedNodeId: string | null;
   hydrated: boolean;
   past: Snapshot[];
@@ -55,6 +65,14 @@ type MaterialStore = {
   setShape: (shape: PreviewShape) => void;
   setChannel: (channel: PreviewChannel) => void;
   togglePreview: (key: "showGrid" | "autoRotate" | "tiled") => void;
+  setSourceTexture: (source: SourceTextureAsset) => void;
+  removeSourceTexture: () => void;
+  updateMapSettings: (
+    map: keyof MapGenerationSettings,
+    values: Record<string, number | boolean>,
+  ) => void;
+  resetMapSettings: () => void;
+  setExportResolution: (resolution: ExportResolution) => void;
   replaceProject: (project: MaterialProject) => void;
   newProject: () => void;
   toProject: () => MaterialProject;
@@ -62,11 +80,21 @@ type MaterialStore = {
 
 const starter = createStarterProject();
 
-function snapshot(state: Pick<MaterialStore, "nodes" | "edges" | "preview">) {
+function snapshot(
+  state: Pick<
+    MaterialStore,
+    "nodes" | "edges" | "preview" | "sourceTexture" | "mapSettings" | "exportResolution"
+  >,
+) {
   return {
     nodes: structuredClone(state.nodes),
     edges: structuredClone(state.edges),
     preview: structuredClone(state.preview),
+    // Source image data is immutable; retain the reference so slider history does
+    // not duplicate a potentially large data URL dozens of times.
+    sourceTexture: state.sourceTexture,
+    mapSettings: structuredClone(state.mapSettings),
+    exportResolution: state.exportResolution,
   };
 }
 
@@ -84,6 +112,9 @@ export const useMaterialStore = create<MaterialStore>((set, get) => ({
   nodes: starter.nodes,
   edges: starter.edges,
   preview: starter.preview,
+  sourceTexture: starter.sourceTexture,
+  mapSettings: starter.mapSettings,
+  exportResolution: starter.exportResolution,
   selectedNodeId: "blend",
   hydrated: false,
   past: [],
@@ -205,6 +236,37 @@ export const useMaterialStore = create<MaterialStore>((set, get) => ({
       preview: { ...state.preview, [key]: !state.preview[key] },
     })),
 
+  setSourceTexture: (sourceTexture) =>
+    set((state) => ({
+      ...withCheckpoint(state),
+      sourceTexture,
+      preview: { ...state.preview, channel: "material" },
+    })),
+
+  removeSourceTexture: () =>
+    set((state) => ({
+      ...withCheckpoint(state),
+      sourceTexture: null,
+      preview: { ...state.preview, channel: "material" },
+    })),
+
+  updateMapSettings: (map, values) =>
+    set((state) => ({
+      ...withCheckpoint(state),
+      mapSettings: {
+        ...state.mapSettings,
+        [map]: { ...state.mapSettings[map], ...values },
+      },
+    })),
+
+  resetMapSettings: () =>
+    set((state) => ({
+      ...withCheckpoint(state),
+      mapSettings: structuredClone(DEFAULT_MAP_SETTINGS),
+    })),
+
+  setExportResolution: (exportResolution) => set({ exportResolution }),
+
   replaceProject: (project) =>
     set({
       projectId: project.id,
@@ -213,6 +275,9 @@ export const useMaterialStore = create<MaterialStore>((set, get) => ({
       nodes: project.nodes,
       edges: project.edges,
       preview: project.preview,
+      sourceTexture: project.sourceTexture,
+      mapSettings: project.mapSettings,
+      exportResolution: project.exportResolution,
       selectedNodeId: null,
       past: [],
       future: [],
@@ -238,6 +303,9 @@ export const useMaterialStore = create<MaterialStore>((set, get) => ({
       nodes: state.nodes,
       edges: state.edges,
       preview: state.preview,
+      sourceTexture: state.sourceTexture,
+      mapSettings: state.mapSettings,
+      exportResolution: state.exportResolution,
     };
   },
 }));

@@ -20,6 +20,7 @@ import {
   CloudOff,
   Command,
   Download,
+  FileImage,
   FileArchive,
   Grid3X3,
   Layers3,
@@ -57,6 +58,8 @@ import {
   saveProjectLocal,
 } from "../core/material-persistence";
 import { useMaterialStore } from "../core/material-store";
+import { importSourceTexture } from "../core/texture-generator";
+import { useMaterialEvaluation } from "../core/use-material-evaluation";
 import {
   NODE_LIBRARY,
   type MaterialGraphNode,
@@ -64,18 +67,22 @@ import {
   type NodeValueMap,
   type PreviewChannel,
   type PreviewShape,
+  type TextureMapChannel,
 } from "../core/material-types";
 import { MaterialNode } from "./MaterialNode";
 import { MaterialPreview } from "./MaterialPreview";
+import { TextureMapInspector, TextureMapWorkbench } from "./TextureMapLab";
 
 const nodeTypes: NodeTypes = { materialNode: MaterialNode };
 
 const channelLabels: Array<{ id: PreviewChannel; label: string }> = [
   { id: "material", label: "Material" },
-  { id: "baseColor", label: "Color" },
+  { id: "baseColor", label: "Albedo" },
+  { id: "height", label: "Height" },
   { id: "normal", label: "Normal" },
   { id: "roughness", label: "Rough" },
   { id: "metallic", label: "Metal" },
+  { id: "ao", label: "AO" },
 ];
 
 const shapeIcons: Record<PreviewShape, typeof Circle> = {
@@ -273,17 +280,22 @@ function NodeInspector({ node }: { node: MaterialGraphNode | null }) {
 
 function StudioWorkspace() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const albedoInputRef = useRef<HTMLInputElement | null>(null);
   const [search, setSearch] = useState("");
   const [saveState, setSaveState] = useState<"loading" | "saved" | "saving" | "error">("loading");
   const [notice, setNotice] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [isCompactMenuOpen, setCompactMenuOpen] = useState(false);
   const [rendererLabel, setRendererLabel] = useState("WebGL2 renderer");
+  const [workspaceView, setWorkspaceView] = useState<"graph" | "maps">("graph");
 
   const projectName = useMaterialStore((state) => state.projectName);
   const nodes = useMaterialStore((state) => state.nodes);
   const edges = useMaterialStore((state) => state.edges);
   const preview = useMaterialStore((state) => state.preview);
+  const sourceTexture = useMaterialStore((state) => state.sourceTexture);
+  const mapSettings = useMaterialStore((state) => state.mapSettings);
+  const exportResolution = useMaterialStore((state) => state.exportResolution);
   const selectedNodeId = useMaterialStore((state) => state.selectedNodeId);
   const hydrated = useMaterialStore((state) => state.hydrated);
   const pastLength = useMaterialStore((state) => state.past.length);
@@ -303,6 +315,16 @@ function StudioWorkspace() {
   const replaceProject = useMaterialStore((state) => state.replaceProject);
   const newProject = useMaterialStore((state) => state.newProject);
   const setHydrated = useMaterialStore((state) => state.setHydrated);
+  const setSourceTexture = useMaterialStore((state) => state.setSourceTexture);
+  const removeSourceTexture = useMaterialStore((state) => state.removeSourceTexture);
+  const updateMapSettings = useMaterialStore((state) => state.updateMapSettings);
+  const resetMapSettings = useMaterialStore((state) => state.resetMapSettings);
+  const setExportResolution = useMaterialStore((state) => state.setExportResolution);
+
+  const { evaluation, isGenerating, error: generationError } = useMaterialEvaluation(
+    { nodes, edges, sourceTexture, mapSettings },
+    256,
+  );
 
   const selectedNode = useMemo(
     () => nodes.find((node) => node.id === selectedNodeId) ?? null,
@@ -340,6 +362,11 @@ function StudioWorkspace() {
   }, [replaceProject, setHydrated]);
 
   useEffect(() => {
+    if (sourceTexture) setWorkspaceView("maps");
+    else setWorkspaceView("graph");
+  }, [sourceTexture]);
+
+  useEffect(() => {
     if (!hydrated) return;
     setSaveState("saving");
     const timeout = window.setTimeout(() => {
@@ -348,7 +375,7 @@ function StudioWorkspace() {
         .catch(() => setSaveState("error"));
     }, 700);
     return () => window.clearTimeout(timeout);
-  }, [edges, hydrated, nodes, preview, projectName]);
+  }, [edges, exportResolution, hydrated, mapSettings, nodes, preview, projectName, sourceTexture]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -408,6 +435,24 @@ function StudioWorkspace() {
       setNotice(error instanceof Error ? error.message : "Import failed");
     }
   }, [replaceProject]);
+
+  const openAlbedoFile = useCallback(async (file: File) => {
+    setNotice("Reading albedo and preparing maps…");
+    try {
+      const source = await importSourceTexture(file);
+      setSourceTexture(source);
+      setWorkspaceView("maps");
+      setNotice(`Generated six editable maps from ${source.name}`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "The albedo image could not be opened.");
+    }
+  }, [setSourceTexture]);
+
+  const handleAlbedoImport = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (file) void openAlbedoFile(file);
+  }, [openAlbedoFile]);
 
   const addLibraryNode = (kind: MaterialNodeKind) => {
     const index = nodes.length;
@@ -471,6 +516,13 @@ function StudioWorkspace() {
           accept=".mmpack,application/zip"
           onChange={handleImport}
         />
+        <input
+          ref={albedoInputRef}
+          className="visually-hidden"
+          type="file"
+          accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp"
+          onChange={handleAlbedoImport}
+        />
         {isCompactMenuOpen ? (
           <div className="compact-menu">
             <button onClick={() => fileInputRef.current?.click()}><Upload size={14} /> Import package</button>
@@ -492,6 +544,14 @@ function StudioWorkspace() {
           <button className="icon-button" aria-label="More project options"><MoreHorizontal size={16} /></button>
         </div>
         <div className="history-controls">
+          <div className="workspace-view-switch" aria-label="Workspace view">
+            <button className={workspaceView === "graph" ? "is-active" : ""} onClick={() => setWorkspaceView("graph")}>Graph</button>
+            <button
+              className={workspaceView === "maps" ? "is-active" : ""}
+              onClick={() => sourceTexture ? setWorkspaceView("maps") : albedoInputRef.current?.click()}
+            >Map Lab</button>
+          </div>
+          <span className="toolbar-divider" />
           <button className="icon-button" aria-label="Undo" onClick={undo} disabled={!pastLength}><Undo2 size={15} /></button>
           <button className="icon-button" aria-label="Redo" onClick={redo} disabled={!futureLength}><Redo2 size={15} /></button>
           <span className="toolbar-divider" />
@@ -517,6 +577,27 @@ function StudioWorkspace() {
             </div>
             <Check size={14} />
           </div>
+
+          {sourceTexture ? (
+            <button className="albedo-source-card is-loaded" onClick={() => setWorkspaceView("maps")}>
+              <img src={sourceTexture.dataUrl} alt="" />
+              <span>
+                <em>Source albedo</em>
+                <strong>{sourceTexture.name}</strong>
+                <small>{sourceTexture.width}×{sourceTexture.height}</small>
+              </span>
+              <SlidersHorizontal size={14} />
+            </button>
+          ) : (
+            <button className="albedo-source-card" onClick={() => albedoInputRef.current?.click()}>
+              <span className="albedo-source-card__icon"><FileImage size={18} /></span>
+              <span>
+                <strong>Add albedo texture</strong>
+                <small>Generate 6 editable PBR maps</small>
+              </span>
+              <Plus size={14} />
+            </button>
+          )}
 
           <div className="library-section-heading">
             <span>Node library</span>
@@ -551,6 +632,19 @@ function StudioWorkspace() {
           </div>
         </aside>
 
+        {workspaceView === "maps" && sourceTexture ? (
+          <TextureMapWorkbench
+            evaluation={evaluation}
+            source={sourceTexture}
+            selectedChannel={preview.channel}
+            isGenerating={isGenerating}
+            error={generationError}
+            onSelectChannel={(channel: TextureMapChannel) => setChannel(channel)}
+            onChooseSource={() => albedoInputRef.current?.click()}
+            onRemoveSource={removeSourceTexture}
+            onDropSource={(file) => void openAlbedoFile(file)}
+          />
+        ) : (
         <section className="graph-panel" aria-label="Material node graph">
           <ReactFlow
             nodes={nodes}
@@ -591,6 +685,7 @@ function StudioWorkspace() {
             <div><strong>Live graph</strong><span>Changes evaluate locally</span></div>
           </div>
         </section>
+        )}
 
         <aside className="preview-panel">
           <div className="preview-panel__header">
@@ -615,8 +710,7 @@ function StudioWorkspace() {
           </div>
 
           <MaterialPreview
-            nodes={nodes}
-            edges={edges}
+            evaluation={evaluation}
             shape={preview.shape}
             channel={preview.channel}
             showGrid={preview.showGrid}
@@ -640,7 +734,20 @@ function StudioWorkspace() {
           </div>
 
           <div className="inspector-panel">
-            <NodeInspector node={selectedNode} />
+            {sourceTexture ? (
+              <TextureMapInspector
+                channel={preview.channel}
+                settings={mapSettings}
+                exportResolution={exportResolution}
+                evaluation={evaluation}
+                projectName={projectName}
+                onUpdate={updateMapSettings}
+                onReset={resetMapSettings}
+                onSetExportResolution={setExportResolution}
+              />
+            ) : (
+              <NodeInspector node={selectedNode} />
+            )}
           </div>
         </aside>
       </section>
