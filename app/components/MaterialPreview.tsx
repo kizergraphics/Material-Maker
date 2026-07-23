@@ -11,16 +11,18 @@ import {
   Engine,
   HemisphericLight,
   ImageProcessingConfiguration,
+  MaterialPluginBase,
   Mesh,
   MeshBuilder,
   PBRMaterial,
   Scene,
+  ShaderLanguage,
   ShadowGenerator,
   StandardMaterial,
   Texture,
   Vector3,
-  VertexData,
 } from "@babylonjs/core";
+import type { BaseTexture, MaterialDefines, UniformBuffer } from "@babylonjs/core";
 import { useEffect, useRef, useState } from "react";
 import type { MaterialEvaluation } from "../core/material-evaluator";
 import type {
@@ -76,70 +78,156 @@ function createStudioEnvironment(scene: Scene) {
   scene.environmentIntensity = 0.82;
 }
 
-function createPoleFreeSphere(scene: Scene) {
-  const subdivisions = 48;
-  const radius = 1.375;
-  const positions: number[] = [];
-  const normals: number[] = [];
-  const uvs: number[] = [];
-  const indices: number[] = [];
-  const faces = [
-    { center: [1, 0, 0], axisU: [0, 0, -1], axisV: [0, 1, 0] },
-    { center: [-1, 0, 0], axisU: [0, 0, 1], axisV: [0, 1, 0] },
-    { center: [0, 1, 0], axisU: [1, 0, 0], axisV: [0, 0, -1] },
-    { center: [0, -1, 0], axisU: [1, 0, 0], axisV: [0, 0, 1] },
-    { center: [0, 0, 1], axisU: [1, 0, 0], axisV: [0, 1, 0] },
-    { center: [0, 0, -1], axisU: [-1, 0, 0], axisV: [0, 1, 0] },
-  ] as const;
+type TriPlanarTextures = {
+  albedo?: BaseTexture;
+  normal?: BaseTexture;
+  orm?: BaseTexture;
+};
 
-  for (const face of faces) {
-    const vertexOffset = positions.length / 3;
-    for (let row = 0; row <= subdivisions; row += 1) {
-      const v = row / subdivisions;
-      const faceV = v * 2 - 1;
-      for (let column = 0; column <= subdivisions; column += 1) {
-        const u = column / subdivisions;
-        const faceU = u * 2 - 1;
-        const x = face.center[0] + face.axisU[0] * faceU + face.axisV[0] * faceV;
-        const y = face.center[1] + face.axisU[1] * faceU + face.axisV[1] * faceV;
-        const z = face.center[2] + face.axisU[2] * faceU + face.axisV[2] * faceV;
+class TriPlanarPBRPlugin extends MaterialPluginBase {
+  constructor(material: PBRMaterial, private readonly textures: TriPlanarTextures) {
+    super(material, "seamless-triplanar", 200, {}, true, true, true);
+  }
 
-        // Spherify a cube instead of collapsing latitude rows into pole vertices.
-        // Each of the six faces retains a full, evenly distributed UV square.
-        const sphereX = x * Math.sqrt(1 - (y * y) / 2 - (z * z) / 2 + (y * y * z * z) / 3);
-        const sphereY = y * Math.sqrt(1 - (z * z) / 2 - (x * x) / 2 + (z * z * x * x) / 3);
-        const sphereZ = z * Math.sqrt(1 - (x * x) / 2 - (y * y) / 2 + (x * x * y * y) / 3);
-        const inverseLength = 1 / Math.hypot(sphereX, sphereY, sphereZ);
-        const normalX = sphereX * inverseLength;
-        const normalY = sphereY * inverseLength;
-        const normalZ = sphereZ * inverseLength;
+  override getClassName() {
+    return "TriPlanarPBRPlugin";
+  }
 
-        positions.push(normalX * radius, normalY * radius, normalZ * radius);
-        normals.push(normalX, normalY, normalZ);
-        uvs.push(u, 1 - v);
-      }
-    }
+  override isCompatible(shaderLanguage: ShaderLanguage) {
+    return shaderLanguage === ShaderLanguage.GLSL;
+  }
 
-    const rowWidth = subdivisions + 1;
-    for (let row = 0; row < subdivisions; row += 1) {
-      for (let column = 0; column < subdivisions; column += 1) {
-        const topLeft = vertexOffset + row * rowWidth + column;
-        const topRight = topLeft + 1;
-        const bottomLeft = topLeft + rowWidth;
-        const bottomRight = bottomLeft + 1;
-        indices.push(topLeft, topRight, bottomLeft, topRight, bottomRight, bottomLeft);
-      }
+  override prepareDefinesBeforeAttributes(defines: MaterialDefines) {
+    defines._needNormals = true;
+  }
+
+  override getSamplers(samplers: string[]) {
+    if (this.textures.albedo) samplers.push("triAlbedoSampler");
+    if (this.textures.normal) samplers.push("triNormalSampler");
+    if (this.textures.orm) samplers.push("triOrmSampler");
+  }
+
+  override bindForSubMesh(uniformBuffer: UniformBuffer) {
+    if (this.textures.albedo) uniformBuffer.setTexture("triAlbedoSampler", this.textures.albedo);
+    if (this.textures.normal) uniformBuffer.setTexture("triNormalSampler", this.textures.normal);
+    if (this.textures.orm) uniformBuffer.setTexture("triOrmSampler", this.textures.orm);
+  }
+
+  override getActiveTextures(activeTextures: BaseTexture[]) {
+    for (const texture of Object.values(this.textures)) {
+      if (texture) activeTextures.push(texture);
     }
   }
 
-  const mesh = new Mesh("preview-mesh", scene);
-  const vertexData = new VertexData();
-  vertexData.positions = positions;
-  vertexData.normals = normals;
-  vertexData.uvs = uvs;
-  vertexData.indices = indices;
-  vertexData.applyToMesh(mesh, true);
-  return mesh;
+  override hasTexture(texture: BaseTexture) {
+    return Object.values(this.textures).includes(texture);
+  }
+
+  override dispose(forceDisposeTextures?: boolean) {
+    if (!forceDisposeTextures) return;
+    for (const texture of new Set(Object.values(this.textures))) texture?.dispose();
+  }
+
+  override getCustomCode(shaderType: string) {
+    if (shaderType === "vertex") {
+      return {
+        CUSTOM_VERTEX_DEFINITIONS: `
+          varying vec3 triPosition;
+          varying vec3 triNormal;
+          varying vec3 triWorldAxisX;
+          varying vec3 triWorldAxisY;
+          varying vec3 triWorldAxisZ;
+        `,
+        CUSTOM_VERTEX_UPDATE_WORLDPOS: `
+          triPosition = positionUpdated;
+          triNormal = normalize(normalUpdated);
+          triWorldAxisX = normalize(normalWorld * vec3(1.0, 0.0, 0.0));
+          triWorldAxisY = normalize(normalWorld * vec3(0.0, 1.0, 0.0));
+          triWorldAxisZ = normalize(normalWorld * vec3(0.0, 0.0, 1.0));
+        `,
+      };
+    }
+
+    const samplerDeclarations = [
+      this.textures.albedo ? "uniform sampler2D triAlbedoSampler;" : "",
+      this.textures.normal ? "uniform sampler2D triNormalSampler;" : "",
+      this.textures.orm ? "uniform sampler2D triOrmSampler;" : "",
+    ].join("\n");
+
+    return {
+      CUSTOM_FRAGMENT_DEFINITIONS: `
+        ${samplerDeclarations}
+        varying vec3 triPosition;
+        varying vec3 triNormal;
+        varying vec3 triWorldAxisX;
+        varying vec3 triWorldAxisY;
+        varying vec3 triWorldAxisZ;
+
+        vec3 seamlessTriWeights(vec3 surfaceNormal) {
+          vec3 weights = pow(max(abs(surfaceNormal) - 0.025, vec3(0.0)), vec3(5.0));
+          return weights / max(weights.x + weights.y + weights.z, 0.00001);
+        }
+
+        vec4 seamlessTriSample(sampler2D map, vec3 position, vec3 surfaceNormal) {
+          vec3 axisSign = step(vec3(0.0), surfaceNormal) * 2.0 - 1.0;
+          vec3 weights = seamlessTriWeights(surfaceNormal);
+          float scale = 0.72;
+          vec4 projectionX = texture2D(map, position.zy * vec2(axisSign.x, 1.0) * scale);
+          vec4 projectionY = texture2D(map, position.xz * vec2(axisSign.y, 1.0) * scale);
+          vec4 projectionZ = texture2D(map, position.xy * vec2(-axisSign.z, 1.0) * scale);
+          return projectionX * weights.x + projectionY * weights.y + projectionZ * weights.z;
+        }
+
+        vec3 seamlessTriNormal(sampler2D map, vec3 position, vec3 surfaceNormal) {
+          vec3 axisSign = step(vec3(0.0), surfaceNormal) * 2.0 - 1.0;
+          vec3 weights = seamlessTriWeights(surfaceNormal);
+          float scale = 0.72;
+          vec3 normalX = texture2D(map, position.zy * vec2(axisSign.x, 1.0) * scale).xyz * 2.0 - 1.0;
+          vec3 normalY = texture2D(map, position.xz * vec2(axisSign.y, 1.0) * scale).xyz * 2.0 - 1.0;
+          vec3 normalZ = texture2D(map, position.xy * vec2(-axisSign.z, 1.0) * scale).xyz * 2.0 - 1.0;
+          normalX.x *= axisSign.x;
+          normalY.x *= axisSign.y;
+          normalZ.x *= -axisSign.z;
+          normalX.z *= axisSign.x;
+          normalY.z *= axisSign.y;
+          normalZ.z *= axisSign.z;
+          return normalize(
+            normalX.zyx * weights.x +
+            normalY.xzy * weights.y +
+            normalZ.xyz * weights.z
+          );
+        }
+      `,
+      CUSTOM_FRAGMENT_UPDATE_ALBEDO: this.textures.albedo
+        ? "surfaceAlbedo = toLinearSpace(seamlessTriSample(triAlbedoSampler, triPosition, normalize(triNormal)).rgb);"
+        : "",
+      CUSTOM_FRAGMENT_BEFORE_LIGHTS: this.textures.normal
+        ? `
+            vec3 triObjectNormal = seamlessTriNormal(triNormalSampler, triPosition, normalize(triNormal));
+            normalW = normalize(
+              triWorldAxisX * triObjectNormal.x +
+              triWorldAxisY * triObjectNormal.y +
+              triWorldAxisZ * triObjectNormal.z
+            );
+          `
+        : "",
+      CUSTOM_FRAGMENT_UPDATE_METALLICROUGHNESS: this.textures.orm
+        ? `
+            vec4 triOrm = seamlessTriSample(triOrmSampler, triPosition, normalize(triNormal));
+            metallicRoughness = vec2(triOrm.b, triOrm.g);
+          `
+        : "",
+      CUSTOM_FRAGMENT_BEFORE_FINALCOLORCOMPOSITION: this.textures.orm
+        ? `
+            float triOcclusion = seamlessTriSample(triOrmSampler, triPosition, normalize(triNormal)).r;
+            finalAmbient *= triOcclusion;
+            #ifdef REFLECTION
+              finalIrradiance *= mix(1.0, triOcclusion, 0.8);
+            #endif
+          `
+        : "",
+    };
+  }
 }
 
 function createPreviewMesh(scene: Scene, shape: PreviewShape) {
@@ -161,7 +249,11 @@ function createPreviewMesh(scene: Scene, shape: PreviewShape) {
     mesh.position.y = 0.1;
     return mesh;
   }
-  return createPoleFreeSphere(scene);
+  return MeshBuilder.CreateSphere(
+    "preview-mesh",
+    { diameter: 2.75, segments: 96 },
+    scene,
+  );
 }
 
 function createTexture(
@@ -207,6 +299,7 @@ export function MaterialPreview({
   const shadowRef = useRef<ShadowGenerator | null>(null);
   const materialRef = useRef<PBRMaterial | StandardMaterial | null>(null);
   const autoRotateRef = useRef(autoRotate);
+  const isPointerInteractingRef = useRef(false);
   const [fps, setFps] = useState(60);
 
   useEffect(() => {
@@ -242,10 +335,13 @@ export function MaterialPreview({
     camera.lowerRadiusLimit = 3.3;
     camera.upperRadiusLimit = 8;
     camera.wheelPrecision = 50;
-    camera.panningSensibility = 800;
-    camera.inertia = 0.72;
+    camera.panningSensibility = 0;
+    camera.angularSensibilityX = 1100;
+    camera.angularSensibilityY = 1100;
+    camera.inertia = 0.78;
     camera.minZ = 0.05;
     camera.wheelDeltaPercentage = 0.01;
+    camera.useNaturalPinchZoom = true;
     camera.attachControl(canvas, true);
 
     const pipeline = new DefaultRenderingPipeline(
@@ -313,8 +409,18 @@ export function MaterialPreview({
     engineRef.current = engine;
     sceneRef.current = scene;
 
+    const beginPointerInteraction = () => {
+      isPointerInteractingRef.current = true;
+    };
+    const endPointerInteraction = () => {
+      isPointerInteractingRef.current = false;
+    };
+    canvas.addEventListener("pointerdown", beginPointerInteraction);
+    window.addEventListener("pointerup", endPointerInteraction);
+    window.addEventListener("pointercancel", endPointerInteraction);
+
     scene.onBeforeRenderObservable.add(() => {
-      if (meshRef.current && autoRotateRef.current) {
+      if (meshRef.current && autoRotateRef.current && !isPointerInteractingRef.current) {
         meshRef.current.rotation.y += engine.getDeltaTime() * 0.00012;
       }
     });
@@ -330,6 +436,9 @@ export function MaterialPreview({
     return () => {
       window.clearInterval(fpsTimer);
       resizeObserver.disconnect();
+      canvas.removeEventListener("pointerdown", beginPointerInteraction);
+      window.removeEventListener("pointerup", endPointerInteraction);
+      window.removeEventListener("pointercancel", endPointerInteraction);
       scene.dispose();
       engine.dispose();
       sceneRef.current = null;
@@ -373,14 +482,12 @@ export function MaterialPreview({
       evaluation.height,
     );
 
-    let material: PBRMaterial | StandardMaterial;
+    let material: PBRMaterial;
     if (channel === "normal") {
-      const diagnostic = new StandardMaterial("normal-diagnostic", scene);
-      diagnostic.disableLighting = true;
-      diagnostic.diffuseColor = Color3.Black();
-      diagnostic.specularColor = Color3.Black();
-      diagnostic.emissiveTexture = normal;
-      diagnostic.emissiveColor = Color3.White();
+      const diagnostic = new PBRMaterial("normal-diagnostic", scene);
+      diagnostic.unlit = true;
+      diagnostic.albedoColor = Color3.White();
+      new TriPlanarPBRPlugin(diagnostic, { albedo: normal });
       material = diagnostic;
       albedo.dispose();
     } else if (
@@ -403,22 +510,22 @@ export function MaterialPreview({
         evaluation.width,
         evaluation.height,
       );
-      const diagnostic = new StandardMaterial(`${channel}-diagnostic`, scene);
-      diagnostic.disableLighting = true;
-      diagnostic.diffuseColor = Color3.Black();
-      diagnostic.specularColor = Color3.Black();
-      diagnostic.emissiveTexture = diagnosticTexture;
-      diagnostic.emissiveColor = Color3.White();
+      const diagnostic = new PBRMaterial(`${channel}-diagnostic`, scene);
+      diagnostic.unlit = true;
+      diagnostic.albedoColor = Color3.White();
+      new TriPlanarPBRPlugin(diagnostic, { albedo: diagnosticTexture });
       material = diagnostic;
       albedo.dispose();
       normal.dispose();
     } else {
       const pbr = new PBRMaterial("generated-pbr", scene);
-      pbr.albedoTexture = channel !== "material" || mapSettings.baseColor.enabled ? albedo : null;
-      if (channel === "material" && !mapSettings.baseColor.enabled) {
+      const triPlanarTextures: TriPlanarTextures = {};
+      if (channel !== "material" || mapSettings.baseColor.enabled) {
+        triPlanarTextures.albedo = albedo;
+      } else {
         pbr.albedoColor = new Color3(0.5, 0.5, 0.5);
+        albedo.dispose();
       }
-      pbr.bumpTexture = channel === "material" && mapSettings.normal.enabled ? normal : null;
       if (channel === "material") {
         const packed = new Uint8ClampedArray(evaluation.width * evaluation.height * 4);
         for (let offset = 0; offset < packed.length; offset += 4) {
@@ -427,24 +534,23 @@ export function MaterialPreview({
           packed[offset + 2] = mapSettings.metallic.enabled ? evaluation.metallic[offset] : 0;
           packed[offset + 3] = 255;
         }
-        pbr.metallicTexture = createTexture(
+        triPlanarTextures.orm = createTexture(
           scene,
           "generated-orm",
           packed,
           evaluation.width,
           evaluation.height,
         );
-        pbr.useAmbientOcclusionFromMetallicTextureRed = true;
-        pbr.useRoughnessFromMetallicTextureGreen = true;
-        pbr.useMetallnessFromMetallicTextureBlue = true;
         pbr.metallic = 1;
         pbr.roughness = 1;
-        if (!mapSettings.baseColor.enabled) albedo.dispose();
-        if (!mapSettings.normal.enabled) normal.dispose();
+        if (mapSettings.normal.enabled) triPlanarTextures.normal = normal;
+        else normal.dispose();
       } else {
         pbr.metallic = 0;
         pbr.roughness = 0.76;
+        normal.dispose();
       }
+      new TriPlanarPBRPlugin(pbr, triPlanarTextures);
       pbr.environmentIntensity = 0.9;
       pbr.directIntensity = 1.08;
       pbr.specularIntensity = 1.12;
@@ -455,7 +561,6 @@ export function MaterialPreview({
       pbr.clearCoat.intensity = 0.16;
       pbr.clearCoat.roughness = 0.42;
       material = pbr;
-      if (channel !== "material") normal.dispose();
     }
 
     materialRef.current = material;
@@ -472,7 +577,7 @@ export function MaterialPreview({
       <div className="material-preview__badges" aria-hidden="true">
         <span>256 PREVIEW</span>
         <span>{fps} FPS</span>
-        {shape === "sphere" ? <span>POLE-FREE UV</span> : null}
+        {shape === "sphere" ? <span>SEAMLESS TRI-PLANAR</span> : null}
         {channel !== "material" && !mapSettings[channel].enabled ? <span>MAP OFF</span> : null}
       </div>
       <div className="material-preview__hint">Drag to orbit · Scroll to zoom</div>

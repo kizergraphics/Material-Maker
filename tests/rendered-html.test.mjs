@@ -72,13 +72,14 @@ test("keeps persistence local and removes the starter preview", async () => {
   assert.match(studio, /Save to Library/);
   assert.match(studio, /Place Map Lab maps/);
   assert.match(studio, /Nodes & recipes/);
-  assert.match(preview, /diagnostic\.diffuseColor = Color3\.Black/);
+  assert.match(preview, /diagnostic\.unlit = true/);
   assert.match(preview, /DefaultRenderingPipeline/);
   assert.match(preview, /ShadowGenerator/);
   assert.match(preview, /procedural-studio-environment/);
-  assert.match(preview, /createPoleFreeSphere/);
-  assert.match(preview, /POLE-FREE UV/);
-  assert.doesNotMatch(preview, /MeshBuilder\.CreateSphere/);
+  assert.match(preview, /TriPlanarPBRPlugin/);
+  assert.match(preview, /SEAMLESS TRI-PLANAR/);
+  assert.match(preview, /MeshBuilder\.CreateSphere/);
+  assert.doesNotMatch(preview, /createPoleFreeSphere/);
   assert.match(node, /material-node__thumbnail/);
   assert.match(hosting, /"d1": null/);
   assert.match(hosting, /"r2": null/);
