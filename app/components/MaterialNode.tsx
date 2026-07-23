@@ -76,6 +76,7 @@ export function MaterialNode(props: NodeProps<MaterialGraphNode>) {
   const Icon = icons[data.kind];
   const nodeInputs = inputs[data.kind] ?? [];
   const color = data.values.color;
+  const thumbnail = data.values.thumbnail;
 
   return (
     <article
@@ -96,6 +97,13 @@ export function MaterialNode(props: NodeProps<MaterialGraphNode>) {
             className="material-node__swatch"
             style={{ backgroundColor: color }}
             aria-hidden="true"
+          />
+        ) : null}
+        {thumbnail ? (
+          <img
+            className="material-node__thumbnail"
+            src={thumbnail}
+            alt={`${data.values.mapChannel ?? "Generated"} map preview`}
           />
         ) : null}
         <span className="material-node__summary">{valueSummary(data)}</span>

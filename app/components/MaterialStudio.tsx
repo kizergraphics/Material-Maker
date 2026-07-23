@@ -62,7 +62,8 @@ import {
   saveProjectLocal,
 } from "../core/material-persistence";
 import { useMaterialStore } from "../core/material-store";
-import { importSourceTexture } from "../core/texture-generator";
+import type { MaterialEvaluation } from "../core/material-evaluator";
+import { importSourceTexture, pixelsForChannel } from "../core/texture-generator";
 import { useMaterialEvaluation } from "../core/use-material-evaluation";
 import {
   NODE_LIBRARY,
@@ -95,6 +96,42 @@ const shapeIcons: Record<PreviewShape, typeof Circle> = {
   cube: BoxIcon,
   plane: Square,
 };
+
+const generatedMapChannels: TextureMapChannel[] = [
+  "baseColor",
+  "height",
+  "normal",
+  "roughness",
+  "metallic",
+  "ao",
+];
+
+function createMapThumbnails(evaluation: MaterialEvaluation) {
+  const source = document.createElement("canvas");
+  source.width = evaluation.width;
+  source.height = evaluation.height;
+  const sourceContext = source.getContext("2d");
+  const thumbnail = document.createElement("canvas");
+  thumbnail.width = 96;
+  thumbnail.height = 96;
+  const thumbnailContext = thumbnail.getContext("2d");
+  if (!sourceContext || !thumbnailContext) return {};
+
+  return Object.fromEntries(generatedMapChannels.map((channel) => {
+    sourceContext.putImageData(
+      new ImageData(
+        new Uint8ClampedArray(pixelsForChannel(evaluation, channel)),
+        evaluation.width,
+        evaluation.height,
+      ),
+      0,
+      0,
+    );
+    thumbnailContext.clearRect(0, 0, 96, 96);
+    thumbnailContext.drawImage(source, 0, 0, 96, 96);
+    return [channel, thumbnail.toDataURL("image/webp", 0.82)];
+  })) as Partial<Record<TextureMapChannel, string>>;
+}
 
 const nodeHelp = [
   { name: "Base color", purpose: "Sets the surface color. Use it as a solid starting layer or as one side of a blend." },
@@ -537,11 +574,11 @@ function StudioWorkspace() {
   }, [openAlbedoFile]);
 
   const sendMapsToGraph = useCallback(() => {
-    syncGeneratedMapsToGraph();
+    syncGeneratedMapsToGraph(createMapThumbnails(evaluation));
     setWorkspaceView("graph");
     setNotice("Generated maps added and connected in Graph Lab");
     window.setTimeout(() => reactFlow.fitView({ padding: 0.2, duration: 280 }), 0);
-  }, [reactFlow, syncGeneratedMapsToGraph]);
+  }, [evaluation, reactFlow, syncGeneratedMapsToGraph]);
 
   const addLibraryNode = (kind: MaterialNodeKind) => {
     const index = nodes.length;

@@ -59,7 +59,9 @@ type MaterialStore = {
   onEdgesChange: (changes: EdgeChange<MaterialGraphEdge>[]) => void;
   onConnect: (connection: Connection) => void;
   addNode: (kind: MaterialNodeKind, position?: XYPosition) => void;
-  syncGeneratedMapsToGraph: () => void;
+  syncGeneratedMapsToGraph: (
+    thumbnails?: Partial<Record<TextureMapChannel, string>>,
+  ) => void;
   updateNodeValue: (nodeId: string, values: Partial<NodeValueMap>) => void;
   checkpoint: () => void;
   undo: () => void;
@@ -189,7 +191,7 @@ export const useMaterialStore = create<MaterialStore>((set, get) => ({
     }));
   },
 
-  syncGeneratedMapsToGraph: () => {
+  syncGeneratedMapsToGraph: (thumbnails = {}) => {
     const channels: Array<{ id: TextureMapChannel; label: string }> = [
       { id: "baseColor", label: "Generated albedo" },
       { id: "height", label: "Generated height" },
@@ -213,6 +215,7 @@ export const useMaterialStore = create<MaterialStore>((set, get) => ({
           values: {
             mapChannel: channel.id,
             enabled: state.mapSettings[channel.id].enabled,
+            thumbnail: thumbnails[channel.id],
           },
         },
       }));

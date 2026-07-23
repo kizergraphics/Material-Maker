@@ -4,14 +4,18 @@ import {
   ArcRotateCamera,
   Color3,
   Color4,
+  CubeTexture,
+  DefaultRenderingPipeline,
   DirectionalLight,
   DynamicTexture,
   Engine,
   HemisphericLight,
+  ImageProcessingConfiguration,
   Mesh,
   MeshBuilder,
   PBRMaterial,
   Scene,
+  ShadowGenerator,
   StandardMaterial,
   Texture,
   Vector3,
@@ -33,6 +37,43 @@ type Props = {
   mapSettings: MapGenerationSettings;
   className?: string;
 };
+
+function environmentFace(top: string, bottom: string, highlight?: string) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 96;
+  canvas.height = 96;
+  const context = canvas.getContext("2d");
+  if (!context) return "";
+  const gradient = context.createLinearGradient(0, 0, 0, 96);
+  gradient.addColorStop(0, top);
+  gradient.addColorStop(1, bottom);
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, 96, 96);
+  if (highlight) {
+    const softbox = context.createRadialGradient(29, 22, 2, 29, 22, 43);
+    softbox.addColorStop(0, highlight);
+    softbox.addColorStop(1, "rgba(255,255,255,0)");
+    context.fillStyle = softbox;
+    context.fillRect(0, 0, 96, 96);
+  }
+  return canvas.toDataURL("image/png");
+}
+
+function createStudioEnvironment(scene: Scene) {
+  const environment = CubeTexture.CreateFromImages([
+    environmentFace("#d89d69", "#182331", "rgba(255,244,220,.92)"),
+    environmentFace("#6884ad", "#121820", "rgba(190,218,255,.7)"),
+    environmentFace("#d9e2e7", "#68727c", "rgba(255,255,255,.96)"),
+    environmentFace("#20272d", "#070a0c"),
+    environmentFace("#8093a8", "#151a20", "rgba(218,234,255,.55)"),
+    environmentFace("#b88056", "#11171c", "rgba(255,225,190,.6)"),
+  ], scene, false);
+  environment.name = "procedural-studio-environment";
+  environment.gammaSpace = true;
+  environment.level = 0.74;
+  scene.environmentTexture = environment;
+  scene.environmentIntensity = 0.82;
+}
 
 function createPreviewMesh(scene: Scene, shape: PreviewShape) {
   if (shape === "cube") {
@@ -100,6 +141,7 @@ export function MaterialPreview({
   const sceneRef = useRef<Scene | null>(null);
   const meshRef = useRef<Mesh | null>(null);
   const groundRef = useRef<Mesh | null>(null);
+  const shadowRef = useRef<ShadowGenerator | null>(null);
   const materialRef = useRef<PBRMaterial | StandardMaterial | null>(null);
   const autoRotateRef = useRef(autoRotate);
   const [fps, setFps] = useState(60);
@@ -112,13 +154,19 @@ export function MaterialPreview({
     const canvas = canvasRef.current;
     if (!canvas) return;
     const engine = new Engine(canvas, true, {
-      preserveDrawingBuffer: true,
+      preserveDrawingBuffer: false,
       stencil: true,
       antialias: true,
-    });
+      powerPreference: "high-performance",
+    }, true);
     const scene = new Scene(engine);
     scene.clearColor = new Color4(0.025, 0.029, 0.033, 1);
-    scene.ambientColor = new Color3(0.06, 0.07, 0.08);
+    scene.ambientColor = new Color3(0.035, 0.042, 0.05);
+    scene.imageProcessingConfiguration.toneMappingEnabled = true;
+    scene.imageProcessingConfiguration.toneMappingType = ImageProcessingConfiguration.TONEMAPPING_ACES;
+    scene.imageProcessingConfiguration.exposure = 1.08;
+    scene.imageProcessingConfiguration.contrast = 1.16;
+    createStudioEnvironment(scene);
 
     const camera = new ArcRotateCamera(
       "preview-camera",
@@ -132,7 +180,23 @@ export function MaterialPreview({
     camera.upperRadiusLimit = 8;
     camera.wheelPrecision = 50;
     camera.panningSensibility = 800;
+    camera.inertia = 0.72;
+    camera.minZ = 0.05;
+    camera.wheelDeltaPercentage = 0.01;
     camera.attachControl(canvas, true);
+
+    const pipeline = new DefaultRenderingPipeline(
+      "preview-rendering-pipeline",
+      true,
+      scene,
+      [camera],
+    );
+    pipeline.samples = 4;
+    pipeline.fxaaEnabled = true;
+    pipeline.bloomEnabled = true;
+    pipeline.bloomThreshold = 0.92;
+    pipeline.bloomWeight = 0.1;
+    pipeline.bloomKernel = 40;
 
     const keyLight = new DirectionalLight(
       "key-light",
@@ -142,6 +206,16 @@ export function MaterialPreview({
     keyLight.position = new Vector3(4, 6, -4);
     keyLight.intensity = 4.1;
     keyLight.diffuse = new Color3(1, 0.84, 0.68);
+    keyLight.shadowMinZ = 0.1;
+    keyLight.shadowMaxZ = 20;
+
+    const shadows = new ShadowGenerator(1024, keyLight);
+    shadows.useBlurExponentialShadowMap = true;
+    shadows.blurKernel = 24;
+    shadows.bias = 0.0007;
+    shadows.normalBias = 0.025;
+    shadows.setDarkness(0.34);
+    shadowRef.current = shadows;
 
     const fill = new HemisphericLight(
       "fill-light",
@@ -170,6 +244,7 @@ export function MaterialPreview({
     groundMaterial.diffuseColor = new Color3(0.035, 0.041, 0.047);
     groundMaterial.specularColor = new Color3(0.08, 0.09, 0.1);
     ground.material = groundMaterial;
+    ground.receiveShadows = true;
     groundRef.current = ground;
 
     engineRef.current = engine;
@@ -196,15 +271,18 @@ export function MaterialPreview({
       engine.dispose();
       sceneRef.current = null;
       engineRef.current = null;
+      shadowRef.current = null;
     };
   }, []);
 
   useEffect(() => {
     const scene = sceneRef.current;
     if (!scene) return;
+    if (meshRef.current) shadowRef.current?.removeShadowCaster(meshRef.current);
     meshRef.current?.dispose(false, true);
     const mesh = createPreviewMesh(scene, shape);
     mesh.material = materialRef.current;
+    shadowRef.current?.addShadowCaster(mesh, true);
     meshRef.current = mesh;
   }, [shape]);
 
@@ -305,7 +383,11 @@ export function MaterialPreview({
         pbr.roughness = 0.76;
       }
       pbr.environmentIntensity = 0.9;
+      pbr.directIntensity = 1.08;
+      pbr.specularIntensity = 1.12;
       pbr.metallicF0Factor = 0.88;
+      pbr.usePhysicalLightFalloff = true;
+      pbr.enableSpecularAntiAliasing = true;
       pbr.clearCoat.isEnabled = channel === "material";
       pbr.clearCoat.intensity = 0.16;
       pbr.clearCoat.roughness = 0.42;

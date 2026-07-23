@@ -99,6 +99,7 @@ export type NodeValueMap = {
   strength?: number;
   mapChannel?: TextureMapChannel;
   enabled?: boolean;
+  thumbnail?: string;
 };
 
 export type MaterialNodeData = Record<string, unknown> & {

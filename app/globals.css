@@ -1168,6 +1168,15 @@ input:focus-visible {
   border-color: #6d543d;
 }
 
+.material-node[data-kind="textureMap"] {
+  min-height: 105px;
+}
+
+.material-node[data-kind="textureMap"] .material-node__body {
+  min-height: 72px;
+  align-items: center;
+}
+
 .material-node.is-selected {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px rgba(226,164,95,.25), 0 10px 26px rgba(0,0,0,.42);
@@ -1222,6 +1231,17 @@ input:focus-visible {
   flex: 0 0 auto;
   border: 1px solid rgba(255,255,255,.18);
   border-radius: 3px;
+}
+
+.material-node__thumbnail {
+  width: 54px;
+  height: 54px;
+  flex: 0 0 auto;
+  object-fit: cover;
+  background: #070a0c;
+  border: 1px solid rgba(255,255,255,.16);
+  border-radius: 4px;
+  image-rendering: auto;
 }
 
 .material-node__summary {
