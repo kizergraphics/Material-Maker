@@ -77,6 +77,10 @@ test("keeps persistence local and removes the starter preview", async () => {
   assert.match(preview, /ShadowGenerator/);
   assert.match(preview, /procedural-studio-environment/);
   assert.match(preview, /TriPlanarPBRPlugin/);
+  assert.match(
+    preview,
+    /super\(material,\s*"seamless-triplanar",\s*200,\s*\{\},\s*false,\s*false,\s*true\);[\s\S]*this\.textures = textures;[\s\S]*this\._pluginManager\._addPlugin\(this\);[\s\S]*this\._enable\(true\);/,
+  );
   assert.match(preview, /SEAMLESS TRI-PLANAR/);
   assert.match(preview, /MeshBuilder\.CreateSphere/);
   assert.doesNotMatch(preview, /createPoleFreeSphere/);

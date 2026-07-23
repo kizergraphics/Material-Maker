@@ -85,8 +85,15 @@ type TriPlanarTextures = {
 };
 
 class TriPlanarPBRPlugin extends MaterialPluginBase {
-  constructor(material: PBRMaterial, private readonly textures: TriPlanarTextures) {
-    super(material, "seamless-triplanar", 200, {}, true, true, true);
+  private readonly textures: TriPlanarTextures;
+
+  constructor(material: PBRMaterial, textures: TriPlanarTextures) {
+    // Babylon inspects custom shader code while a plugin is registered. Defer
+    // registration until subclass state exists so getCustomCode can read it.
+    super(material, "seamless-triplanar", 200, {}, false, false, true);
+    this.textures = textures;
+    this._pluginManager._addPlugin(this);
+    this._enable(true);
   }
 
   override getClassName() {
@@ -128,7 +135,7 @@ class TriPlanarPBRPlugin extends MaterialPluginBase {
     for (const texture of new Set(Object.values(this.textures))) texture?.dispose();
   }
 
-  override getCustomCode(shaderType: string) {
+  override getCustomCode(shaderType: string): Record<string, string> {
     if (shaderType === "vertex") {
       return {
         CUSTOM_VERTEX_DEFINITIONS: `
