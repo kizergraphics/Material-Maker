@@ -56,12 +56,13 @@ test("server-renders the no-upload web viewer", async () => {
   assert.match(html, /Ambient occlusion/);
 });
 
-test("keeps persistence local and removes the starter preview", async () => {
-  const [persistence, studio, preview, node, hosting] = await Promise.all([
+test("keeps persistence local and creates an empty material graph", async () => {
+  const [persistence, studio, preview, node, types, hosting] = await Promise.all([
     readFile(new URL("../app/core/material-persistence.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/components/MaterialStudio.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/MaterialPreview.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/MaterialNode.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/core/material-types.ts", import.meta.url), "utf8"),
     readFile(new URL("../.openai/hosting.json", import.meta.url), "utf8"),
   ]);
   assert.match(persistence, /indexedDB\.open/);
@@ -91,6 +92,11 @@ test("keeps persistence local and removes the starter preview", async () => {
   assert.match(studio, /evaluateNodeMap/);
   assert.match(node, /has-thumbnail/);
   assert.match(node, /material-node__thumbnail/);
+  assert.match(
+    types,
+    /createStarterProject\(\)[\s\S]*?nodes:\s*\[\],[\s\S]*?edges:\s*\[\],/,
+  );
+  assert.doesNotMatch(types, /Warm alloy|Micro pitting|Surface variation/);
   assert.match(hosting, /"d1": null/);
   assert.match(hosting, /"r2": null/);
   await assert.rejects(access(new URL("app/_sites-preview", projectRoot)));
