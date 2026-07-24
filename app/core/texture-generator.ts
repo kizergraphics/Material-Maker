@@ -141,6 +141,233 @@ function applyHue(r: number, g: number, b: number, degrees: number) {
   ] as const;
 }
 
+export interface PreparedSourceTexture {
+  source: Uint8ClampedArray;
+  luminance: Float32Array;
+  width: number;
+  height: number;
+  scale: number;
+}
+
+export const textureMapChannels: TextureMapChannel[] = [
+  "baseColor",
+  "height",
+  "normal",
+  "roughness",
+  "metallic",
+  "ao",
+];
+
+const generationWarnings = [
+  "Metallic maps cannot be identified reliably from color alone; verify the metallic controls for your material.",
+];
+
+function prepareSourcePixels(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  scale: number,
+): PreparedSourceTexture {
+  const pixelCount = width * height;
+  const luminance = new Float32Array(pixelCount);
+  for (let index = 0; index < pixelCount; index += 1) {
+    const offset = index * 4;
+    const sourceR = source[offset] / 255;
+    const sourceG = source[offset + 1] / 255;
+    const sourceB = source[offset + 2] / 255;
+    luminance[index] = sourceR * 0.2126 + sourceG * 0.7152 + sourceB * 0.0722;
+  }
+  return { source, luminance, width, height, scale };
+}
+
+export async function prepareSourceTexture(
+  source: SourceTextureAsset,
+  maxEdge: number,
+): Promise<PreparedSourceTexture> {
+  const decoded = await readSourcePixels(source, maxEdge);
+  return prepareSourcePixels(
+    decoded.pixels,
+    decoded.width,
+    decoded.height,
+    maxEdge / 256,
+  );
+}
+
+export function generateDerivedMap(
+  prepared: PreparedSourceTexture,
+  settings: MapGenerationSettings,
+  channel: TextureMapChannel,
+): Partial<MaterialEvaluation> {
+  const { source, luminance, width, height, scale } = prepared;
+  const pixelCount = width * height;
+
+  if (channel === "baseColor") {
+    const albedo = new Uint8ClampedArray(pixelCount * 4);
+    for (let index = 0; index < pixelCount; index += 1) {
+      const offset = index * 4;
+      const sourceR = source[offset] / 255;
+      const sourceG = source[offset + 1] / 255;
+      const sourceB = source[offset + 2] / 255;
+      let r = sourceR;
+      let g = sourceG;
+      let b = sourceB;
+      [r, g, b] = applyHue(r, g, b, settings.baseColor.hue);
+      const luma = r * 0.2126 + g * 0.7152 + b * 0.0722;
+      r = luma + (r - luma) * settings.baseColor.saturation;
+      g = luma + (g - luma) * settings.baseColor.saturation;
+      b = luma + (b - luma) * settings.baseColor.saturation;
+      r =
+        (r - 0.5) * settings.baseColor.contrast +
+        0.5 +
+        settings.baseColor.brightness;
+      g =
+        (g - 0.5) * settings.baseColor.contrast +
+        0.5 +
+        settings.baseColor.brightness;
+      b =
+        (b - 0.5) * settings.baseColor.contrast +
+        0.5 +
+        settings.baseColor.brightness;
+      albedo[offset] = Math.round(clamp(r) * 255);
+      albedo[offset + 1] = Math.round(clamp(g) * 255);
+      albedo[offset + 2] = Math.round(clamp(b) * 255);
+      albedo[offset + 3] = source[offset + 3];
+    }
+    return { albedo };
+  }
+
+  if (channel === "height") {
+    const heightMap = new Uint8ClampedArray(pixelCount * 4);
+    const blurredHeight = boxBlur(
+      luminance,
+      width,
+      height,
+      settings.height.blur * Math.max(1, scale),
+    );
+    for (let index = 0; index < pixelCount; index += 1) {
+      let value =
+        (blurredHeight[index] - 0.5) * settings.height.contrast +
+        0.5 +
+        settings.height.bias;
+      if (settings.height.invert) value = 1 - value;
+      writeGray(heightMap, index * 4, value);
+    }
+    return { heightMap };
+  }
+
+  if (channel === "normal") {
+    const normal = new Uint8ClampedArray(pixelCount * 4);
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const index = y * width + x;
+        const offset = index * 4;
+        const left = luminance[y * width + ((x - 1 + width) % width)];
+        const right = luminance[y * width + ((x + 1) % width)];
+        const down = luminance[((y - 1 + height) % height) * width + x];
+        const up = luminance[((y + 1) % height) * width + x];
+        let nx =
+          (left - right) *
+          settings.normal.strength *
+          settings.normal.detail *
+          2;
+        let ny =
+          (down - up) *
+          settings.normal.strength *
+          settings.normal.detail *
+          2;
+        if (settings.normal.invertY) ny *= -1;
+        let nz = 1;
+        const length = Math.hypot(nx, ny, nz) || 1;
+        nx /= length;
+        ny /= length;
+        nz /= length;
+        normal[offset] = Math.round((nx * 0.5 + 0.5) * 255);
+        normal[offset + 1] = Math.round((ny * 0.5 + 0.5) * 255);
+        normal[offset + 2] = Math.round(nz * 255);
+        normal[offset + 3] = 255;
+      }
+    }
+    return { normal };
+  }
+
+  if (channel === "roughness") {
+    const roughness = new Uint8ClampedArray(pixelCount * 4);
+    let roughnessTotal = 0;
+    for (let index = 0; index < pixelCount; index += 1) {
+      const offset = index * 4;
+      let rough =
+        settings.roughness.base +
+        (luminance[index] - 0.5) * settings.roughness.variation;
+      if (settings.roughness.invert) rough = 1 - rough;
+      rough = clamp(rough);
+      roughnessTotal += rough;
+      writeGray(roughness, offset, rough);
+    }
+    return { roughness, roughnessValue: roughnessTotal / pixelCount };
+  }
+
+  if (channel === "metallic") {
+    const metallic = new Uint8ClampedArray(pixelCount * 4);
+    let metallicTotal = 0;
+    for (let index = 0; index < pixelCount; index += 1) {
+      const offset = index * 4;
+      let metal =
+        settings.metallic.base +
+        (luminance[index] - 0.5) * settings.metallic.variation;
+      if (settings.metallic.invert) metal = 1 - metal;
+      metal = clamp(metal);
+      metallicTotal += metal;
+      writeGray(metallic, offset, metal);
+    }
+    return { metallic, metallicValue: metallicTotal / pixelCount };
+  }
+
+  const ambientOcclusion = new Uint8ClampedArray(pixelCount * 4);
+  const aoBlur = boxBlur(
+    luminance,
+    width,
+    height,
+    settings.ao.radius * Math.max(1, scale),
+  );
+  for (let index = 0; index < pixelCount; index += 1) {
+    const offset = index * 4;
+    const cavity = Math.max(0, aoBlur[index] - luminance[index]);
+    const ao = clamp(
+      1 - cavity * settings.ao.strength * 5 + settings.ao.bias,
+    );
+    writeGray(ambientOcclusion, offset, ao);
+  }
+  return { ambientOcclusion };
+}
+
+export function generatePreparedMaps(
+  prepared: PreparedSourceTexture,
+  settings: MapGenerationSettings,
+): MaterialEvaluation {
+  const generated = Object.assign(
+    {},
+    ...textureMapChannels.map((channel) =>
+      generateDerivedMap(prepared, settings, channel),
+    ),
+  ) as Pick<
+    MaterialEvaluation,
+    | "albedo"
+    | "heightMap"
+    | "normal"
+    | "roughness"
+    | "metallic"
+    | "ambientOcclusion"
+    | "roughnessValue"
+    | "metallicValue"
+  >;
+  return {
+    width: prepared.width,
+    height: prepared.height,
+    ...generated,
+    warnings: generationWarnings,
+  };
+}
+
 export function generateDerivedMaps(
   source: Uint8ClampedArray,
   width: number,
@@ -148,118 +375,10 @@ export function generateDerivedMaps(
   settings: MapGenerationSettings,
   scale = 1,
 ): MaterialEvaluation {
-  const pixelCount = width * height;
-  const albedo = new Uint8ClampedArray(pixelCount * 4);
-  const heightMap = new Uint8ClampedArray(pixelCount * 4);
-  const normal = new Uint8ClampedArray(pixelCount * 4);
-  const roughness = new Uint8ClampedArray(pixelCount * 4);
-  const metallic = new Uint8ClampedArray(pixelCount * 4);
-  const ambientOcclusion = new Uint8ClampedArray(pixelCount * 4);
-  const luminance = new Float32Array(pixelCount);
-
-  for (let index = 0; index < pixelCount; index += 1) {
-    const offset = index * 4;
-    const sourceR = source[offset] / 255;
-    const sourceG = source[offset + 1] / 255;
-    const sourceB = source[offset + 2] / 255;
-    luminance[index] = sourceR * 0.2126 + sourceG * 0.7152 + sourceB * 0.0722;
-    let r = sourceR;
-    let g = sourceG;
-    let b = sourceB;
-    [r, g, b] = applyHue(r, g, b, settings.baseColor.hue);
-    const luma = r * 0.2126 + g * 0.7152 + b * 0.0722;
-    r = luma + (r - luma) * settings.baseColor.saturation;
-    g = luma + (g - luma) * settings.baseColor.saturation;
-    b = luma + (b - luma) * settings.baseColor.saturation;
-    r = (r - 0.5) * settings.baseColor.contrast + 0.5 + settings.baseColor.brightness;
-    g = (g - 0.5) * settings.baseColor.contrast + 0.5 + settings.baseColor.brightness;
-    b = (b - 0.5) * settings.baseColor.contrast + 0.5 + settings.baseColor.brightness;
-    albedo[offset] = Math.round(clamp(r) * 255);
-    albedo[offset + 1] = Math.round(clamp(g) * 255);
-    albedo[offset + 2] = Math.round(clamp(b) * 255);
-    albedo[offset + 3] = source[offset + 3];
-  }
-
-  const blurredHeight = boxBlur(
-    luminance,
-    width,
-    height,
-    settings.height.blur * Math.max(1, scale),
+  return generatePreparedMaps(
+    prepareSourcePixels(source, width, height, scale),
+    settings,
   );
-  const heights = new Float32Array(pixelCount);
-  for (let index = 0; index < pixelCount; index += 1) {
-    let value = (blurredHeight[index] - 0.5) * settings.height.contrast + 0.5 + settings.height.bias;
-    if (settings.height.invert) value = 1 - value;
-    heights[index] = clamp(value);
-    writeGray(heightMap, index * 4, heights[index]);
-  }
-
-  // Every derived channel starts from the immutable source luminance. Height
-  // edits therefore affect only the height map instead of cascading into the
-  // normal, roughness, metallic, and AO maps.
-  const normalSource = luminance;
-  const aoBlur = boxBlur(
-    luminance,
-    width,
-    height,
-    settings.ao.radius * Math.max(1, scale),
-  );
-  let roughnessTotal = 0;
-  let metallicTotal = 0;
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const index = y * width + x;
-      const offset = index * 4;
-      const left = normalSource[y * width + ((x - 1 + width) % width)];
-      const right = normalSource[y * width + ((x + 1) % width)];
-      const down = normalSource[((y - 1 + height) % height) * width + x];
-      const up = normalSource[((y + 1) % height) * width + x];
-      let nx = (left - right) * settings.normal.strength * settings.normal.detail * 2;
-      let ny = (down - up) * settings.normal.strength * settings.normal.detail * 2;
-      if (settings.normal.invertY) ny *= -1;
-      let nz = 1;
-      const length = Math.hypot(nx, ny, nz) || 1;
-      nx /= length;
-      ny /= length;
-      nz /= length;
-      normal[offset] = Math.round((nx * 0.5 + 0.5) * 255);
-      normal[offset + 1] = Math.round((ny * 0.5 + 0.5) * 255);
-      normal[offset + 2] = Math.round(nz * 255);
-      normal[offset + 3] = 255;
-
-      let rough = settings.roughness.base + (luminance[index] - 0.5) * settings.roughness.variation;
-      if (settings.roughness.invert) rough = 1 - rough;
-      rough = clamp(rough);
-      roughnessTotal += rough;
-      writeGray(roughness, offset, rough);
-
-      let metal = settings.metallic.base + (luminance[index] - 0.5) * settings.metallic.variation;
-      if (settings.metallic.invert) metal = 1 - metal;
-      metal = clamp(metal);
-      metallicTotal += metal;
-      writeGray(metallic, offset, metal);
-
-      const cavity = Math.max(0, aoBlur[index] - luminance[index]);
-      const ao = clamp(1 - cavity * settings.ao.strength * 5 + settings.ao.bias);
-      writeGray(ambientOcclusion, offset, ao);
-    }
-  }
-
-  return {
-    width,
-    height,
-    albedo,
-    heightMap,
-    normal,
-    roughness,
-    metallic,
-    ambientOcclusion,
-    roughnessValue: roughnessTotal / pixelCount,
-    metallicValue: metallicTotal / pixelCount,
-    warnings: [
-      "Metallic maps cannot be identified reliably from color alone; verify the metallic controls for your material.",
-    ],
-  };
 }
 
 export async function evaluateSourceTexture(
@@ -267,13 +386,9 @@ export async function evaluateSourceTexture(
   settings: MapGenerationSettings,
   maxEdge: number,
 ) {
-  const decoded = await readSourcePixels(source, maxEdge);
-  return generateDerivedMaps(
-    decoded.pixels,
-    decoded.width,
-    decoded.height,
+  return generatePreparedMaps(
+    await prepareSourceTexture(source, maxEdge),
     settings,
-    maxEdge / 256,
   );
 }
 

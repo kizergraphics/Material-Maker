@@ -1,9 +1,33 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { evaluateMaterial, type MaterialEvaluation } from "./material-evaluator";
 import type { MaterialProject } from "./material-types";
-import { evaluateSourceTexture } from "./texture-generator";
+import {
+  generateDerivedMap,
+  generatePreparedMaps,
+  prepareSourceTexture,
+  textureMapChannels,
+  type PreparedSourceTexture,
+} from "./texture-generator";
+
+type SourceGeneration = {
+  source: NonNullable<MaterialProject["sourceTexture"]>;
+  maxEdge: number;
+  settings: MaterialProject["mapSettings"];
+};
+
+function channelPixelsChanged(
+  previous: MaterialProject["mapSettings"],
+  next: MaterialProject["mapSettings"],
+  channel: (typeof textureMapChannels)[number],
+) {
+  const previousValues = previous[channel] as Record<string, number | boolean>;
+  const nextValues = next[channel] as Record<string, number | boolean>;
+  return Object.keys(nextValues).some(
+    (key) => key !== "enabled" && previousValues[key] !== nextValues[key],
+  );
+}
 
 export function useMaterialEvaluation(
   project: Pick<
@@ -13,30 +37,86 @@ export function useMaterialEvaluation(
   maxEdge: number,
 ) {
   const graphEvaluation = useMemo(
-    () => evaluateMaterial(project, maxEdge),
+    () => evaluateMaterial(
+      { nodes: project.nodes, edges: project.edges },
+      maxEdge,
+    ),
     [maxEdge, project.edges, project.nodes],
   );
   const [evaluation, setEvaluation] = useState<MaterialEvaluation>(graphEvaluation);
   const [isGenerating, setGenerating] = useState(Boolean(project.sourceTexture));
   const [error, setError] = useState<string | null>(null);
+  const preparedRef = useRef<{
+    source: NonNullable<MaterialProject["sourceTexture"]>;
+    maxEdge: number;
+    promise: Promise<PreparedSourceTexture>;
+  } | null>(null);
+  const generatedRef = useRef<SourceGeneration | null>(null);
 
   useEffect(() => {
     let active = true;
     if (!project.sourceTexture) {
-      setEvaluation(graphEvaluation);
-      setGenerating(false);
-      setError(null);
+      preparedRef.current = null;
+      generatedRef.current = null;
+      return () => {
+        active = false;
+      };
+    }
+
+    const source = project.sourceTexture;
+    if (
+      !preparedRef.current ||
+      preparedRef.current.source !== source ||
+      preparedRef.current.maxEdge !== maxEdge
+    ) {
+      preparedRef.current = {
+        source,
+        maxEdge,
+        promise: prepareSourceTexture(source, maxEdge),
+      };
+    }
+
+    const previous = generatedRef.current;
+    const generateAll =
+      !previous ||
+      previous.source !== source ||
+      previous.maxEdge !== maxEdge;
+    const changedChannels = generateAll
+      ? textureMapChannels
+      : textureMapChannels.filter((channel) =>
+          channelPixelsChanged(previous.settings, project.mapSettings, channel),
+        );
+
+    // Enabling or disabling a map only affects preview composition; its pixel
+    // buffer remains valid and does not need to be regenerated.
+    if (!generateAll && changedChannels.length === 0) {
+      generatedRef.current = { source, maxEdge, settings: project.mapSettings };
       return () => {
         active = false;
       };
     }
 
     setGenerating(true);
-    const timeout = window.setTimeout(() => {
-      evaluateSourceTexture(project.sourceTexture!, project.mapSettings, maxEdge)
-        .then((next) => {
+    const frame = window.requestAnimationFrame(() => {
+      void preparedRef.current!.promise
+        .then((prepared) => {
           if (!active) return;
-          setEvaluation(next);
+          if (generateAll) {
+            setEvaluation(generatePreparedMaps(prepared, project.mapSettings));
+          } else {
+            const updates = Object.assign(
+              {},
+              ...changedChannels.map((channel) =>
+                generateDerivedMap(prepared, project.mapSettings, channel),
+              ),
+            );
+            setEvaluation((current) => ({ ...current, ...updates }));
+          }
+          generatedRef.current = {
+            source,
+            maxEdge,
+            settings: project.mapSettings,
+          };
           setError(null);
         })
         .catch((reason) => {
@@ -46,13 +126,14 @@ export function useMaterialEvaluation(
         .finally(() => {
           if (active) setGenerating(false);
         });
-    }, 80);
-
+    });
     return () => {
       active = false;
-      window.clearTimeout(timeout);
+      window.cancelAnimationFrame(frame);
     };
   }, [graphEvaluation, maxEdge, project.mapSettings, project.sourceTexture]);
 
-  return { evaluation, isGenerating, error };
+  return project.sourceTexture
+    ? { evaluation, isGenerating, error }
+    : { evaluation: graphEvaluation, isGenerating: false, error: null };
 }

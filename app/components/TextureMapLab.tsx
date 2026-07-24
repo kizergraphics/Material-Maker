@@ -50,6 +50,7 @@ export function TextureMapCanvas({
   className?: string;
 }) {
   const ref = useRef<HTMLCanvasElement | null>(null);
+  const pixels = pixelsForChannel(evaluation, channel);
   useEffect(() => {
     const canvas = ref.current;
     const context = canvas?.getContext("2d");
@@ -58,14 +59,14 @@ export function TextureMapCanvas({
     canvas.height = evaluation.height;
     context.putImageData(
       new ImageData(
-        new Uint8ClampedArray(pixelsForChannel(evaluation, channel)),
+        new Uint8ClampedArray(pixels),
         evaluation.width,
         evaluation.height,
       ),
       0,
       0,
     );
-  }, [channel, evaluation]);
+  }, [evaluation.height, evaluation.width, pixels]);
   return <canvas ref={ref} className={className} aria-hidden="true" />;
 }
 
@@ -226,6 +227,7 @@ export function TextureMapInspector({
   evaluation,
   projectName,
   onUpdate,
+  onChangeStart = () => undefined,
   onReset,
   onSetExportResolution,
   note = "Every control is non-destructive and saved with this local project.",
@@ -236,6 +238,7 @@ export function TextureMapInspector({
   evaluation: MaterialEvaluation;
   projectName: string;
   onUpdate: (map: keyof MapGenerationSettings, values: Record<string, number | boolean>) => void;
+  onChangeStart?: () => void;
   onReset: () => void;
   onSetExportResolution: (resolution: ExportResolution) => void;
   note?: string;
@@ -251,11 +254,34 @@ export function TextureMapInspector({
     downloadBlob(await canvasToBlob(canvas), `${safeName}-${channel}.png`);
   };
 
-  const update = (map: keyof MapGenerationSettings, key: string, value: number | boolean) =>
+  const update = (map: keyof MapGenerationSettings, key: string, value: number | boolean) => {
+    if (key === "enabled") onChangeStart();
     onUpdate(map, { [key]: value });
+  };
 
   return (
-    <div className="map-inspector">
+    <div
+      className="map-inspector"
+      onPointerDownCapture={(event) => {
+        const target = event.target as HTMLInputElement;
+        if (target.type === "range") onChangeStart();
+      }}
+      onKeyDownCapture={(event) => {
+        const target = event.target as HTMLInputElement;
+        if (
+          target.type === "range" &&
+          (
+            event.key.startsWith("Arrow") ||
+            event.key === "PageUp" ||
+            event.key === "PageDown" ||
+            event.key === "Home" ||
+            event.key === "End"
+          )
+        ) {
+          onChangeStart();
+        }
+      }}
+    >
       <div className="inspector-heading">
         <div>
           <span className="eyebrow">Map controls</span>

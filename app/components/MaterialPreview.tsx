@@ -469,34 +469,47 @@ export function MaterialPreview({
     if (groundRef.current) groundRef.current.isVisible = showGrid;
   }, [showGrid]);
 
+  const previewAlbedo =
+    channel === "material" || channel === "baseColor" ? evaluation.albedo : null;
+  const previewHeight = channel === "height" ? evaluation.heightMap : null;
+  const previewNormal =
+    channel === "material" || channel === "normal" ? evaluation.normal : null;
+  const previewRoughness =
+    channel === "material" || channel === "roughness" ? evaluation.roughness : null;
+  const previewMetallic =
+    channel === "material" || channel === "metallic" ? evaluation.metallic : null;
+  const previewAo =
+    channel === "material" || channel === "ao" ? evaluation.ambientOcclusion : null;
+  const materialBaseColorEnabled =
+    channel === "material" && mapSettings.baseColor.enabled;
+  const materialNormalEnabled =
+    channel === "material" && mapSettings.normal.enabled;
+  const materialRoughnessEnabled =
+    channel === "material" && mapSettings.roughness.enabled;
+  const materialMetallicEnabled =
+    channel === "material" && mapSettings.metallic.enabled;
+  const materialAoEnabled =
+    channel === "material" && mapSettings.ao.enabled;
+
   useEffect(() => {
     const scene = sceneRef.current;
     if (!scene) return;
     materialRef.current?.dispose(true, true);
 
-    const albedo = createTexture(
-      scene,
-      "generated-albedo",
-      evaluation.albedo,
-      evaluation.width,
-      evaluation.height,
-    );
-    const normal = createTexture(
-      scene,
-      "generated-normal",
-      evaluation.normal,
-      evaluation.width,
-      evaluation.height,
-    );
-
     let material: PBRMaterial;
     if (channel === "normal") {
+      const normal = createTexture(
+        scene,
+        "generated-normal",
+        previewNormal!,
+        evaluation.width,
+        evaluation.height,
+      );
       const diagnostic = new PBRMaterial("normal-diagnostic", scene);
       diagnostic.unlit = true;
       diagnostic.albedoColor = Color3.White();
       new TriPlanarPBRPlugin(diagnostic, { albedo: normal });
       material = diagnostic;
-      albedo.dispose();
     } else if (
       channel === "height" ||
       channel === "roughness" ||
@@ -504,12 +517,12 @@ export function MaterialPreview({
       channel === "ao"
     ) {
       const pixels = channel === "height"
-        ? evaluation.heightMap
+        ? previewHeight!
         : channel === "roughness"
-          ? evaluation.roughness
+          ? previewRoughness!
           : channel === "metallic"
-            ? evaluation.metallic
-            : evaluation.ambientOcclusion;
+            ? previewMetallic!
+            : previewAo!;
       const diagnosticTexture = createTexture(
         scene,
         `${channel}-diagnostic`,
@@ -522,23 +535,26 @@ export function MaterialPreview({
       diagnostic.albedoColor = Color3.White();
       new TriPlanarPBRPlugin(diagnostic, { albedo: diagnosticTexture });
       material = diagnostic;
-      albedo.dispose();
-      normal.dispose();
     } else {
       const pbr = new PBRMaterial("generated-pbr", scene);
       const triPlanarTextures: TriPlanarTextures = {};
-      if (channel !== "material" || mapSettings.baseColor.enabled) {
-        triPlanarTextures.albedo = albedo;
+      if (channel !== "material" || materialBaseColorEnabled) {
+        triPlanarTextures.albedo = createTexture(
+          scene,
+          "generated-albedo",
+          previewAlbedo!,
+          evaluation.width,
+          evaluation.height,
+        );
       } else {
         pbr.albedoColor = new Color3(0.5, 0.5, 0.5);
-        albedo.dispose();
       }
       if (channel === "material") {
         const packed = new Uint8ClampedArray(evaluation.width * evaluation.height * 4);
         for (let offset = 0; offset < packed.length; offset += 4) {
-          packed[offset] = mapSettings.ao.enabled ? evaluation.ambientOcclusion[offset] : 255;
-          packed[offset + 1] = mapSettings.roughness.enabled ? evaluation.roughness[offset] : 153;
-          packed[offset + 2] = mapSettings.metallic.enabled ? evaluation.metallic[offset] : 0;
+          packed[offset] = materialAoEnabled ? previewAo![offset] : 255;
+          packed[offset + 1] = materialRoughnessEnabled ? previewRoughness![offset] : 153;
+          packed[offset + 2] = materialMetallicEnabled ? previewMetallic![offset] : 0;
           packed[offset + 3] = 255;
         }
         triPlanarTextures.orm = createTexture(
@@ -550,12 +566,18 @@ export function MaterialPreview({
         );
         pbr.metallic = 1;
         pbr.roughness = 1;
-        if (mapSettings.normal.enabled) triPlanarTextures.normal = normal;
-        else normal.dispose();
+        if (materialNormalEnabled) {
+          triPlanarTextures.normal = createTexture(
+            scene,
+            "generated-normal",
+            previewNormal!,
+            evaluation.width,
+            evaluation.height,
+          );
+        }
       } else {
         pbr.metallic = 0;
         pbr.roughness = 0.76;
-        normal.dispose();
       }
       new TriPlanarPBRPlugin(pbr, triPlanarTextures);
       pbr.environmentIntensity = 0.9;
@@ -572,7 +594,22 @@ export function MaterialPreview({
 
     materialRef.current = material;
     if (meshRef.current) meshRef.current.material = material;
-  }, [evaluation, channel, mapSettings]);
+  }, [
+    channel,
+    evaluation.height,
+    evaluation.width,
+    materialAoEnabled,
+    materialBaseColorEnabled,
+    materialMetallicEnabled,
+    materialNormalEnabled,
+    materialRoughnessEnabled,
+    previewAlbedo,
+    previewAo,
+    previewHeight,
+    previewMetallic,
+    previewNormal,
+    previewRoughness,
+  ]);
 
   return (
     <div className={`material-preview ${className ?? ""}`}>

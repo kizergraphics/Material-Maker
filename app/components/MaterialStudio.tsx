@@ -481,11 +481,12 @@ function StudioWorkspace() {
   }, [graphNodeThumbnails, nodes]);
 
   useEffect(() => {
+    if (workspaceView !== "graph") return;
     const frame = window.requestAnimationFrame(() => {
       setGraphNodeThumbnails(createGraphNodeThumbnails(nodes, edges, evaluation));
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [edges, evaluation, nodes]);
+  }, [edges, evaluation, nodes, workspaceView]);
 
   const selectedNode = useMemo(
     () => nodes.find((node) => node.id === selectedNodeId) ?? null,
@@ -1022,6 +1023,7 @@ function StudioWorkspace() {
                 evaluation={evaluation}
                 projectName={projectName}
                 onUpdate={updateMapSettings}
+                onChangeStart={checkpoint}
                 onReset={resetMapSettings}
                 onSetExportResolution={setExportResolution}
               />

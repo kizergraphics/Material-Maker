@@ -364,7 +364,6 @@ export const useMaterialStore = create<MaterialStore>((set, get) => ({
         }
       }
       return {
-        ...withCheckpoint(state),
         nodes: nextNodes,
         edges: nextEdges,
         mapSettings: {
