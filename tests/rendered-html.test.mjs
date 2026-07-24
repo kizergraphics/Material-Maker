@@ -35,9 +35,9 @@ test("server-renders the material studio shell", async () => {
   assert.match(html, /Forge Material Studio/i);
   assert.match(html, /Material Studio/);
   assert.match(html, /Bake &amp; export/);
-  assert.match(html, /Node library/);
-  assert.match(html, /Add albedo texture/);
-  assert.match(html, /Generate 6 editable PBR maps/);
+  assert.match(html, /No material selected/);
+  assert.match(html, /Select a material to begin/);
+  assert.doesNotMatch(html, /Oxidized Alloy/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/i);
 });
 

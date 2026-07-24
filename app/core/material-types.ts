@@ -202,9 +202,8 @@ export const NODE_LIBRARY: Array<{
   },
 ];
 
-const now = "2026-07-22T00:00:00.000Z";
-
 export function createStarterProject(): MaterialProject {
+  const now = new Date().toISOString();
   const nodes: MaterialGraphNode[] = [
     {
       id: "base-color",
@@ -357,8 +356,8 @@ export function createStarterProject(): MaterialProject {
 
   return {
     schemaVersion: PROJECT_SCHEMA_VERSION,
-    id: "oxidized-alloy",
-    name: "Oxidized Alloy",
+    id: "untitled-material",
+    name: "Untitled Material",
     createdAt: now,
     updatedAt: now,
     nodes,

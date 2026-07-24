@@ -39,9 +39,10 @@ type Snapshot = {
 };
 
 type MaterialStore = {
-  projectId: string;
+  projectId: string | null;
   projectName: string;
   createdAt: string;
+  hasActiveProject: boolean;
   nodes: MaterialGraphNode[];
   edges: MaterialGraphEdge[];
   preview: PreviewSettings;
@@ -78,11 +79,18 @@ type MaterialStore = {
   resetMapSettings: () => void;
   setExportResolution: (resolution: ExportResolution) => void;
   replaceProject: (project: MaterialProject) => void;
+  closeProject: () => void;
   newProject: () => void;
   toProject: () => MaterialProject;
 };
 
-const starter = createStarterProject();
+const emptyPreview: PreviewSettings = {
+  shape: "sphere",
+  channel: "material",
+  showGrid: true,
+  autoRotate: true,
+  tiled: true,
+};
 
 function snapshot(
   state: Pick<
@@ -110,16 +118,17 @@ function withCheckpoint(state: MaterialStore) {
 }
 
 export const useMaterialStore = create<MaterialStore>((set, get) => ({
-  projectId: starter.id,
-  projectName: starter.name,
-  createdAt: starter.createdAt,
-  nodes: starter.nodes,
-  edges: starter.edges,
-  preview: starter.preview,
-  sourceTexture: starter.sourceTexture,
-  mapSettings: starter.mapSettings,
-  exportResolution: starter.exportResolution,
-  selectedNodeId: "blend",
+  projectId: null,
+  projectName: "",
+  createdAt: "",
+  hasActiveProject: false,
+  nodes: [],
+  edges: [],
+  preview: emptyPreview,
+  sourceTexture: null,
+  mapSettings: structuredClone(DEFAULT_MAP_SETTINGS),
+  exportResolution: 1024,
+  selectedNodeId: null,
   hydrated: false,
   past: [],
   future: [],
@@ -366,12 +375,30 @@ export const useMaterialStore = create<MaterialStore>((set, get) => ({
       projectId: project.id,
       projectName: project.name,
       createdAt: project.createdAt,
+      hasActiveProject: true,
       nodes: project.nodes,
       edges: project.edges,
       preview: project.preview,
       sourceTexture: project.sourceTexture,
       mapSettings: project.mapSettings,
       exportResolution: project.exportResolution,
+      selectedNodeId: null,
+      past: [],
+      future: [],
+    }),
+
+  closeProject: () =>
+    set({
+      projectId: null,
+      projectName: "",
+      createdAt: "",
+      hasActiveProject: false,
+      nodes: [],
+      edges: [],
+      preview: structuredClone(emptyPreview),
+      sourceTexture: null,
+      mapSettings: structuredClone(DEFAULT_MAP_SETTINGS),
+      exportResolution: 1024,
       selectedNodeId: null,
       past: [],
       future: [],
@@ -388,6 +415,9 @@ export const useMaterialStore = create<MaterialStore>((set, get) => ({
 
   toProject: () => {
     const state = get();
+    if (!state.hasActiveProject || !state.projectId || !state.createdAt) {
+      throw new Error("Open or create a material first.");
+    }
     return {
       schemaVersion: PROJECT_SCHEMA_VERSION,
       id: state.projectId,

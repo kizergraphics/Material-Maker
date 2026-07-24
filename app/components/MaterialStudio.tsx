@@ -417,7 +417,7 @@ function StudioWorkspace() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const albedoInputRef = useRef<HTMLInputElement | null>(null);
   const [search, setSearch] = useState("");
-  const [saveState, setSaveState] = useState<"loading" | "saved" | "saving" | "error">("loading");
+  const [saveState, setSaveState] = useState<"loading" | "idle" | "saved" | "saving" | "error">("loading");
   const [notice, setNotice] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [isCompactMenuOpen, setCompactMenuOpen] = useState(false);
@@ -437,6 +437,7 @@ function StudioWorkspace() {
   const exportResolution = useMaterialStore((state) => state.exportResolution);
   const selectedNodeId = useMaterialStore((state) => state.selectedNodeId);
   const hydrated = useMaterialStore((state) => state.hydrated);
+  const hasActiveProject = useMaterialStore((state) => state.hasActiveProject);
   const pastLength = useMaterialStore((state) => state.past.length);
   const futureLength = useMaterialStore((state) => state.future.length);
   const setProjectName = useMaterialStore((state) => state.setProjectName);
@@ -453,6 +454,7 @@ function StudioWorkspace() {
   const setChannel = useMaterialStore((state) => state.setChannel);
   const togglePreview = useMaterialStore((state) => state.togglePreview);
   const replaceProject = useMaterialStore((state) => state.replaceProject);
+  const closeProject = useMaterialStore((state) => state.closeProject);
   const newProject = useMaterialStore((state) => state.newProject);
   const setHydrated = useMaterialStore((state) => state.setHydrated);
   const setSourceTexture = useMaterialStore((state) => state.setSourceTexture);
@@ -504,12 +506,16 @@ function StudioWorkspace() {
     let active = true;
     if ("gpu" in navigator) setRendererLabel("WebGPU available");
     loadProjectsLocal()
-      .then((projects) => {
+      .then(async (projects) => {
         if (!active) return;
-        setSavedProjects(projects);
-        if (projects[0]) replaceProject(projects[0]);
+        const savedMaterials = projects.filter((project) => project.id !== "oxidized-alloy");
+        if (savedMaterials.length !== projects.length) {
+          await deleteProjectLocal("oxidized-alloy");
+        }
+        if (!active) return;
+        setSavedProjects(savedMaterials);
         setHydrated(true);
-        setSaveState("saved");
+        setSaveState("idle");
       })
       .catch(() => {
         if (!active) return;
@@ -519,7 +525,7 @@ function StudioWorkspace() {
     return () => {
       active = false;
     };
-  }, [replaceProject, setHydrated]);
+  }, [setHydrated]);
 
   useEffect(() => {
     if (sourceTexture) setWorkspaceView("maps");
@@ -527,7 +533,7 @@ function StudioWorkspace() {
   }, [sourceTexture]);
 
   useEffect(() => {
-    if (!hydrated) return;
+    if (!hydrated || !hasActiveProject) return;
     setSaveState("saving");
     const timeout = window.setTimeout(() => {
       saveProjectLocal(useMaterialStore.getState().toProject())
@@ -538,7 +544,7 @@ function StudioWorkspace() {
         .catch(() => setSaveState("error"));
     }, 700);
     return () => window.clearTimeout(timeout);
-  }, [edges, exportResolution, hydrated, mapSettings, nodes, preview, projectName, sourceTexture]);
+  }, [edges, exportResolution, hasActiveProject, hydrated, mapSettings, nodes, preview, projectName, sourceTexture]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -554,6 +560,7 @@ function StudioWorkspace() {
       }
       if (event.key.toLowerCase() === "s") {
         event.preventDefault();
+        if (!useMaterialStore.getState().hasActiveProject) return;
         setSaveState("saving");
         saveProjectLocal(useMaterialStore.getState().toProject())
           .then(async () => {
@@ -575,6 +582,7 @@ function StudioWorkspace() {
   }, [notice]);
 
   const handleExport = useCallback(async () => {
+    if (!useMaterialStore.getState().hasActiveProject) return;
     setExporting(true);
     try {
       const pack = await createMaterialPack(useMaterialStore.getState().toProject());
@@ -588,6 +596,7 @@ function StudioWorkspace() {
   }, []);
 
   const saveToLibrary = useCallback(async () => {
+    if (!useMaterialStore.getState().hasActiveProject) return;
     setSaveState("saving");
     try {
       const project = useMaterialStore.getState().toProject();
@@ -602,6 +611,10 @@ function StudioWorkspace() {
   }, []);
 
   const openViewer = useCallback(async () => {
+    if (!useMaterialStore.getState().hasActiveProject) {
+      window.location.assign("/viewer");
+      return;
+    }
     setSaveState("saving");
     try {
       await saveProjectLocal(useMaterialStore.getState().toProject());
@@ -619,6 +632,7 @@ function StudioWorkspace() {
     try {
       const project = await importMaterialPack(file);
       replaceProject(project);
+      setSaveState("saved");
       setNotice(`${project.name} opened locally`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Import failed");
@@ -660,6 +674,7 @@ function StudioWorkspace() {
 
   const openSavedProject = (project: MaterialProject) => {
     replaceProject(project);
+    setSaveState("saved");
     setNotice(`${project.name} opened`);
   };
 
@@ -668,7 +683,10 @@ function StudioWorkspace() {
     try {
       await deleteProjectLocal(project.id);
       setSavedProjects((projects) => projects.filter((item) => item.id !== project.id));
-      if (project.id === projectId) newProject();
+      if (project.id === projectId) {
+        closeProject();
+        setSaveState("idle");
+      }
       setNotice(`${project.name} deleted`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Material could not be deleted");
@@ -682,7 +700,9 @@ function StudioWorkspace() {
         ? "Saving…"
         : saveState === "error"
           ? "Storage unavailable"
-          : "Opening project…";
+          : saveState === "idle"
+            ? "No material open"
+            : "Opening library…";
 
   return (
     <main className="studio-shell">
@@ -710,10 +730,10 @@ function StudioWorkspace() {
             <Upload size={15} />
             Import
           </button>
-          <button className="button button--ghost header-save" onClick={() => void saveToLibrary()} disabled={saveState === "saving"}>
+          <button className="button button--ghost header-save" onClick={() => void saveToLibrary()} disabled={!hasActiveProject || saveState === "saving"}>
             <Save size={14} /> Save to Library
           </button>
-          <button className="button button--primary" onClick={handleExport} disabled={exporting}>
+          <button className="button button--primary" onClick={handleExport} disabled={!hasActiveProject || exporting}>
             {exporting ? <RotateCw className="spin" size={15} /> : <Download size={15} />}
             {exporting ? "Baking…" : "Bake & export"}
           </button>
@@ -743,8 +763,8 @@ function StudioWorkspace() {
         {isCompactMenuOpen ? (
           <div className="compact-menu">
             <button onClick={() => fileInputRef.current?.click()}><Upload size={14} /> Import package</button>
-            <button onClick={() => void saveToLibrary()}><Save size={14} /> Save to Library</button>
-            <button onClick={handleExport}><Download size={14} /> Export package</button>
+            <button onClick={() => void saveToLibrary()} disabled={!hasActiveProject}><Save size={14} /> Save to Library</button>
+            <button onClick={handleExport} disabled={!hasActiveProject}><Download size={14} /> Export package</button>
             <button onClick={() => setHelpOpen(true)}><BookOpen size={14} /> Graph help</button>
             <Link href="/viewer" onClick={(event) => { event.preventDefault(); void openViewer(); }}><MonitorUp size={14} /> Open viewer</Link>
           </div>
@@ -755,14 +775,20 @@ function StudioWorkspace() {
         <div className="project-title-block">
           <button className="icon-button" aria-label="Open project browser"><FileArchive size={16} /></button>
           <span className="breadcrumb">Local library <span>/</span></span>
-          <input
-            aria-label="Project name"
-            value={projectName}
-            onChange={(event) => setProjectName(event.target.value)}
-          />
-          <button className="icon-button" aria-label="More project options"><MoreHorizontal size={16} /></button>
+          {hasActiveProject ? (
+            <>
+              <input
+                aria-label="Project name"
+                value={projectName}
+                onChange={(event) => setProjectName(event.target.value)}
+              />
+              <button className="icon-button" aria-label="More project options"><MoreHorizontal size={16} /></button>
+            </>
+          ) : (
+            <span className="project-title-empty">No material selected</span>
+          )}
         </div>
-        <div className="history-controls">
+        {hasActiveProject ? <div className="history-controls">
           <div className="workspace-view-switch" aria-label="Workspace view">
             <button className={workspaceView === "graph" ? "is-active" : ""} onClick={() => setWorkspaceView("graph")}>Graph</button>
             <button
@@ -775,10 +801,10 @@ function StudioWorkspace() {
           <button className="icon-button" aria-label="Redo" onClick={redo} disabled={!futureLength}><Redo2 size={15} /></button>
           <span className="toolbar-divider" />
           <span className="graph-stat"><Command size={13} /> {nodes.length} nodes · {edges.length} links</span>
-        </div>
+        </div> : null}
       </div>
 
-      <section className="studio-workspace">
+      <section className={`studio-workspace${hasActiveProject ? "" : " studio-workspace--empty"}`}>
         <aside className="library-panel">
           <div className="panel-heading">
             <div>
@@ -788,14 +814,24 @@ function StudioWorkspace() {
             <button className="icon-button" aria-label="Create material" onClick={newProject}><Plus size={15} /></button>
           </div>
 
-          <div className="active-material-card">
-            <div className="material-orb" aria-hidden="true" />
-            <div>
-              <strong>{projectName || "Untitled Material"}</strong>
-              <span>Active · PBR metal/rough</span>
+          {hasActiveProject ? (
+            <div className="active-material-card">
+              <div className="material-orb" aria-hidden="true" />
+              <div>
+                <strong>{projectName || "Untitled Material"}</strong>
+                <span>Active · PBR metal/rough</span>
+              </div>
+              <Check size={14} />
             </div>
-            <Check size={14} />
-          </div>
+          ) : (
+            <div className="active-material-card active-material-card--empty">
+              <FileArchive size={17} aria-hidden="true" />
+              <div>
+                <strong>No material selected</strong>
+                <span>Choose a saved material below</span>
+              </div>
+            </div>
+          )}
 
           <div className="library-section-heading saved-material-heading">
             <span>Saved materials</span>
@@ -803,7 +839,7 @@ function StudioWorkspace() {
           </div>
           <div className="saved-material-list" aria-label="Saved materials">
             {savedProjects.length ? savedProjects.map((project) => (
-              <div key={project.id} className={project.id === projectId ? "is-active" : ""}>
+              <div key={project.id} className={hasActiveProject && project.id === projectId ? "is-active" : ""}>
                 <button onClick={() => openSavedProject(project)}>
                   <span className="saved-material-swatch" aria-hidden="true" />
                   <span><strong>{project.name}</strong><em>{project.sourceTexture ? "Image material" : "Graph material"}</em></span>
@@ -815,6 +851,7 @@ function StudioWorkspace() {
             )) : <p>Create a material and it will appear here.</p>}
           </div>
 
+          {hasActiveProject ? <>
           {sourceTexture ? (
             <button className="albedo-source-card is-loaded" onClick={() => setWorkspaceView("maps")}>
               <img src={sourceTexture.dataUrl} alt="" />
@@ -862,6 +899,7 @@ function StudioWorkspace() {
               </button>
             ))}
           </div>
+          </> : null}
 
           <div className="library-footer">
             <ShieldCheck size={14} />
@@ -869,6 +907,7 @@ function StudioWorkspace() {
           </div>
         </aside>
 
+        {hasActiveProject ? <>
         {workspaceView === "maps" && sourceTexture ? (
           <TextureMapWorkbench
             evaluation={evaluation}
@@ -991,6 +1030,14 @@ function StudioWorkspace() {
             )}
           </div>
         </aside>
+        </> : (
+          <section className="material-empty-state" aria-label="No material selected">
+            <span className="material-empty-state__icon"><FileArchive size={25} /></span>
+            <strong>Select a material to begin</strong>
+            <p>Choose a saved material from the Library to load its graph, maps, settings, and preview.</p>
+            <button className="button button--primary" onClick={newProject}><Plus size={14} /> Create new material</button>
+          </section>
+        )}
       </section>
 
       <footer className="studio-statusbar">
