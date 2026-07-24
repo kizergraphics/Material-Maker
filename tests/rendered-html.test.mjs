@@ -56,7 +56,7 @@ test("server-renders the no-upload web viewer", async () => {
   assert.match(html, /Ambient occlusion/);
 });
 
-test("keeps persistence local and creates an empty material graph", async () => {
+test("keeps persistence local and creates only the PBR output node", async () => {
   const [persistence, studio, preview, node, types, hosting] = await Promise.all([
     readFile(new URL("../app/core/material-persistence.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/components/MaterialStudio.tsx", import.meta.url), "utf8"),
@@ -94,7 +94,7 @@ test("keeps persistence local and creates an empty material graph", async () => 
   assert.match(node, /material-node__thumbnail/);
   assert.match(
     types,
-    /createStarterProject\(\)[\s\S]*?nodes:\s*\[\],[\s\S]*?edges:\s*\[\],/,
+    /createStarterProject\(\)[\s\S]*?nodes:\s*\[[\s\S]*?id:\s*"material-output"[\s\S]*?kind:\s*"output"[\s\S]*?\],[\s\S]*?edges:\s*\[\],/,
   );
   assert.doesNotMatch(types, /Warm alloy|Micro pitting|Surface variation/);
   assert.match(hosting, /"d1": null/);

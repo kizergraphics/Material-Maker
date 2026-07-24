@@ -211,7 +211,19 @@ export function createStarterProject(): MaterialProject {
     name: "Untitled Material",
     createdAt: now,
     updatedAt: now,
-    nodes: [],
+    nodes: [
+      {
+        id: "material-output",
+        type: "materialNode",
+        position: { x: 80, y: 40 },
+        data: {
+          label: "PBR material",
+          kind: "output",
+          category: "output",
+          values: {},
+        },
+      },
+    ],
     edges: [],
     preview: {
       shape: "sphere",
