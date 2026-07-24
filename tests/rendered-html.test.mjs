@@ -35,6 +35,7 @@ test("server-renders the material studio shell", async () => {
   assert.match(html, /Forge Material Studio/i);
   assert.match(html, /Material Studio/);
   assert.match(html, /Bake &amp; export/);
+  assert.match(html, /Download all maps/);
   assert.match(html, /No material selected/);
   assert.match(html, /Select a material to begin/);
   assert.doesNotMatch(html, /Oxidized Alloy/);

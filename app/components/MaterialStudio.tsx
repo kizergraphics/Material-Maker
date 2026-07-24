@@ -63,10 +63,17 @@ import {
 } from "../core/material-persistence";
 import { useMaterialStore } from "../core/material-store";
 import {
+  canvasToBlob,
+  evaluateMaterial,
   evaluateNodeMap,
+  pixelsToCanvas,
   type MaterialEvaluation,
 } from "../core/material-evaluator";
-import { importSourceTexture, pixelsForChannel } from "../core/texture-generator";
+import {
+  evaluateSourceTexture,
+  importSourceTexture,
+  pixelsForChannel,
+} from "../core/texture-generator";
 import { useMaterialEvaluation } from "../core/use-material-evaluation";
 import {
   NODE_LIBRARY,
@@ -108,6 +115,23 @@ const generatedMapChannels: TextureMapChannel[] = [
   "metallic",
   "ao",
 ];
+
+const mapDownloadNames: Record<TextureMapChannel, string> = {
+  baseColor: "base-color",
+  height: "height",
+  normal: "normal",
+  roughness: "roughness",
+  metallic: "metallic",
+  ao: "ambient-occlusion",
+};
+
+function safeDownloadName(name: string) {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "") || "material";
+}
 
 function createThumbnail(
   pixels: Uint8ClampedArray,
@@ -420,6 +444,7 @@ function StudioWorkspace() {
   const [saveState, setSaveState] = useState<"loading" | "idle" | "saved" | "saving" | "error">("loading");
   const [notice, setNotice] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [downloadingMaps, setDownloadingMaps] = useState(false);
   const [isCompactMenuOpen, setCompactMenuOpen] = useState(false);
   const [rendererLabel, setRendererLabel] = useState("WebGL2 renderer");
   const [workspaceView, setWorkspaceView] = useState<"graph" | "maps">("graph");
@@ -596,6 +621,50 @@ function StudioWorkspace() {
     }
   }, []);
 
+  const handleDownloadAllMaps = useCallback(async () => {
+    const state = useMaterialStore.getState();
+    if (!state.hasActiveProject || !state.sourceTexture) return;
+    const enabledChannels = generatedMapChannels.filter(
+      (channel) => state.mapSettings[channel].enabled,
+    );
+    if (!enabledChannels.length) {
+      setNotice("Enable at least one map before downloading");
+      return;
+    }
+
+    setDownloadingMaps(true);
+    try {
+      const project = state.toProject();
+      const fullResolutionEvaluation = project.sourceTexture
+        ? await evaluateSourceTexture(
+            project.sourceTexture,
+            project.mapSettings,
+            project.exportResolution,
+          )
+        : evaluateMaterial(project, project.exportResolution);
+      const prefix = safeDownloadName(project.name);
+      for (const channel of enabledChannels) {
+        const blob = await canvasToBlob(
+          pixelsToCanvas(
+            pixelsForChannel(fullResolutionEvaluation, channel),
+            fullResolutionEvaluation.width,
+            fullResolutionEvaluation.height,
+          ),
+        );
+        downloadBlob(blob, `${prefix}-${mapDownloadNames[channel]}.png`);
+      }
+      setNotice(
+        `${enabledChannels.length} enabled map${enabledChannels.length === 1 ? "" : "s"} downloaded`,
+      );
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : "Maps could not be downloaded",
+      );
+    } finally {
+      setDownloadingMaps(false);
+    }
+  }, []);
+
   const saveToLibrary = useCallback(async () => {
     if (!useMaterialStore.getState().hasActiveProject) return;
     setSaveState("saving");
@@ -731,6 +800,14 @@ function StudioWorkspace() {
             <Upload size={15} />
             Import
           </button>
+          <button
+            className="button button--ghost header-download-maps"
+            onClick={() => void handleDownloadAllMaps()}
+            disabled={!sourceTexture || isGenerating || downloadingMaps}
+          >
+            {downloadingMaps ? <RotateCw className="spin" size={15} /> : <Download size={15} />}
+            {downloadingMaps ? "Preparing mapsâ€¦" : "Download all maps"}
+          </button>
           <button className="button button--ghost header-save" onClick={() => void saveToLibrary()} disabled={!hasActiveProject || saveState === "saving"}>
             <Save size={14} /> Save to Library
           </button>
@@ -764,6 +841,9 @@ function StudioWorkspace() {
         {isCompactMenuOpen ? (
           <div className="compact-menu">
             <button onClick={() => fileInputRef.current?.click()}><Upload size={14} /> Import package</button>
+            <button onClick={() => void handleDownloadAllMaps()} disabled={!sourceTexture || isGenerating || downloadingMaps}>
+              <Download size={14} /> Download all maps
+            </button>
             <button onClick={() => void saveToLibrary()} disabled={!hasActiveProject}><Save size={14} /> Save to Library</button>
             <button onClick={handleExport} disabled={!hasActiveProject}><Download size={14} /> Export package</button>
             <button onClick={() => setHelpOpen(true)}><BookOpen size={14} /> Graph help</button>
