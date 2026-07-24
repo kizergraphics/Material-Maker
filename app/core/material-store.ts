@@ -210,8 +210,19 @@ export const useMaterialStore = create<MaterialStore>((set, get) => ({
       { id: "ao", label: "Generated AO" },
     ];
     set((state) => {
-      const output = state.nodes.find((node) => node.data.kind === "output");
-      if (!output || !state.sourceTexture) return state;
+      if (!state.sourceTexture) return state;
+      const existingOutput = state.nodes.find((node) => node.data.kind === "output");
+      const output: MaterialGraphNode = existingOutput ?? {
+        id: "material-output",
+        type: "materialNode",
+        position: { x: 80, y: 40 },
+        data: {
+          label: "PBR material",
+          kind: "output",
+          category: "output",
+          values: {},
+        },
+      };
       const generatedIds = new Set(channels.map((channel) => `generated-map-${channel.id}`));
       const generatedNodes: MaterialGraphNode[] = channels.map((channel, index) => ({
         id: `generated-map-${channel.id}`,
@@ -247,6 +258,7 @@ export const useMaterialStore = create<MaterialStore>((set, get) => ({
         ...withCheckpoint(state),
         nodes: [
           ...state.nodes.filter((node) => !generatedIds.has(node.id)),
+          ...(existingOutput ? [] : [output]),
           ...generatedNodes,
         ],
         edges: [...retainedEdges, ...generatedEdges],
