@@ -11,6 +11,7 @@ internal static class Program
 {
     private const string AppTitle = "Forge Material Studio";
     private const string MutexName = @"Local\ForgeMaterialStudioLauncher";
+    private const int AppPort = 54581;
     private const uint JobObjectLimitKillOnJobClose = 0x00002000;
 
     private static readonly object CleanupLock = new();
@@ -101,7 +102,8 @@ internal static class Program
         await EnsureDependenciesAsync(projectRoot, stateDirectory, npmPath);
 
         startupForm.SetStatus("Starting the local Material Maker service…");
-        var port = FindAvailablePort();
+        EnsurePortAvailable(AppPort);
+        var port = AppPort;
         var url = "http://localhost:" + port;
         StartServer(projectRoot, npmPath, port);
         await WaitForServerAsync(url, TimeSpan.FromSeconds(90));
@@ -303,13 +305,19 @@ internal static class Program
         return "/d /s /c \"\"" + commandPath + "\" " + arguments + "\"";
     }
 
-    private static int FindAvailablePort()
+    private static void EnsurePortAvailable(int port)
     {
-        var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        listener.Stop();
-        return port;
+        using var listener = new TcpListener(IPAddress.Loopback, port);
+        try
+        {
+            listener.Start();
+        }
+        catch (SocketException exception)
+        {
+            throw new InvalidOperationException(
+                "Material Maker's local address is already in use. Close any existing Material Maker window and try again.",
+                exception);
+        }
     }
 
     private static async Task WaitForServerAsync(string url, TimeSpan timeout)
