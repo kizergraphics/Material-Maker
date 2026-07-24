@@ -22,6 +22,19 @@ npm run dev
 
 Open `http://localhost:3000` for the studio and `http://localhost:3000/viewer` for the package viewer.
 
+## Windows launcher
+
+Run `Material Maker.exe` from the project root to start the local development
+server and open the studio in a dedicated browser window. Closing that window
+also stops the server and its child processes, so the next launch always uses
+the latest local project files.
+
+Rebuild the executable after changing the launcher source:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\launcher\build-launcher.ps1
+```
+
 ## Validation
 
 ```bash
