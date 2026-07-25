@@ -58,13 +58,14 @@ test("server-renders the no-upload web viewer", async () => {
 });
 
 test("keeps persistence local and creates only the PBR output node", async () => {
-  const [persistence, studio, preview, node, types, store, hosting] = await Promise.all([
+  const [persistence, studio, preview, node, types, store, launcher, hosting] = await Promise.all([
     readFile(new URL("../app/core/material-persistence.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/components/MaterialStudio.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/MaterialPreview.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/MaterialNode.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/core/material-types.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/core/material-store.ts", import.meta.url), "utf8"),
+    readFile(new URL("../launcher/Program.cs", import.meta.url), "utf8"),
     readFile(new URL("../.openai/hosting.json", import.meta.url), "utf8"),
   ]);
   assert.match(persistence, /indexedDB\.open/);
@@ -103,6 +104,10 @@ test("keeps persistence local and creates only the PBR output node", async () =>
     /existingOutput\s*\?\?\s*\{[\s\S]*?id:\s*"material-output"[\s\S]*?kind:\s*"output"[\s\S]*?\(existingOutput\s*\?\s*\[\]\s*:\s*\[output\]\)/,
   );
   assert.doesNotMatch(types, /Warm alloy|Micro pitting|Surface variation/);
+  assert.match(launcher, /ResolveAppPort\(stateDirectory\)/);
+  assert.match(launcher, /app-port\.txt/);
+  assert.match(launcher, /http_localhost_\*\.indexeddb\.leveldb/);
+  assert.doesNotMatch(launcher, /TcpListener\(IPAddress\.Loopback,\s*0\)/);
   assert.match(hosting, /"d1": null/);
   assert.match(hosting, /"r2": null/);
   await assert.rejects(access(new URL("app/_sites-preview", projectRoot)));

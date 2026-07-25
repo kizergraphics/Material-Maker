@@ -11,7 +11,8 @@ internal static class Program
 {
     private const string AppTitle = "Forge Material Studio";
     private const string MutexName = @"Local\ForgeMaterialStudioLauncher";
-    private const int AppPort = 54581;
+    private const int DefaultAppPort = 54581;
+    private const string AppPortFileName = "app-port.txt";
     private const uint JobObjectLimitKillOnJobClose = 0x00002000;
 
     private static readonly object CleanupLock = new();
@@ -102,8 +103,8 @@ internal static class Program
         await EnsureDependenciesAsync(projectRoot, stateDirectory, npmPath);
 
         startupForm.SetStatus("Starting the local Material Maker service…");
-        EnsurePortAvailable(AppPort);
-        var port = AppPort;
+        var port = ResolveAppPort(stateDirectory);
+        EnsurePortAvailable(port);
         var url = "http://localhost:" + port;
         StartServer(projectRoot, npmPath, port);
         await WaitForServerAsync(url, TimeSpan.FromSeconds(90));
@@ -303,6 +304,57 @@ internal static class Program
     private static string BuildCommandArguments(string commandPath, string arguments)
     {
         return "/d /s /c \"\"" + commandPath + "\" " + arguments + "\"";
+    }
+
+    private static int ResolveAppPort(string stateDirectory)
+    {
+        var portFilePath = Path.Combine(stateDirectory, AppPortFileName);
+        if (File.Exists(portFilePath) &&
+            int.TryParse(File.ReadAllText(portFilePath).Trim(), out var savedPort) &&
+            savedPort is > 0 and <= ushort.MaxValue)
+        {
+            Log("Reusing material storage origin on port " + savedPort + ".");
+            return savedPort;
+        }
+
+        var indexedDbDirectory = Path.Combine(
+            stateDirectory,
+            "browser-profile",
+            "Default",
+            "IndexedDB");
+        var legacyPort = Directory.Exists(indexedDbDirectory)
+            ? Directory
+                .EnumerateDirectories(
+                    indexedDbDirectory,
+                    "http_localhost_*.indexeddb.leveldb",
+                    SearchOption.TopDirectoryOnly)
+                .Select(path => new DirectoryInfo(path))
+                .OrderByDescending(directory => directory.LastWriteTimeUtc)
+                .Select(directory => ParseIndexedDbPort(directory.Name))
+                .FirstOrDefault(port => port is > 0 and <= ushort.MaxValue)
+            : 0;
+        var port = legacyPort == 0 ? DefaultAppPort : legacyPort;
+
+        File.WriteAllText(portFilePath, port.ToString());
+        Log(
+            legacyPort == 0
+                ? "Created material storage origin on port " + port + "."
+                : "Recovered the most recent material storage origin on port " + port + ".");
+        return port;
+    }
+
+    private static int ParseIndexedDbPort(string directoryName)
+    {
+        const string prefix = "http_localhost_";
+        const string suffix = ".indexeddb.leveldb";
+        if (!directoryName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ||
+            !directoryName.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+        {
+            return 0;
+        }
+
+        var portText = directoryName[prefix.Length..^suffix.Length];
+        return int.TryParse(portText, out var port) ? port : 0;
     }
 
     private static void EnsurePortAvailable(int port)
