@@ -24,10 +24,10 @@ Open `http://localhost:3000` for the studio and `http://localhost:3000/viewer` f
 
 ## Windows launcher
 
-Run `Material Maker.exe` from the project root to start the local development
-server and open the studio in a dedicated browser window. Closing that window
-also stops the server and its child processes, so the next launch always uses
-the latest local project files.
+Run `Material Maker.exe` from the project root to start the local server and
+open the studio in a dedicated browser window. The launcher uses the optimized
+production build and rebuilds it only when project files change. Closing the
+window also stops the server and its child processes.
 
 Rebuild the executable after changing the launcher source:
 

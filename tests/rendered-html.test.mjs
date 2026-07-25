@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { access, readFile } from "node:fs/promises";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 const projectRoot = new URL("../", import.meta.url);
 
@@ -55,10 +56,45 @@ test("server-renders the no-upload web viewer", async () => {
   assert.match(html, /Graph values/);
   assert.match(html, /Private by design/);
   assert.match(html, /Ambient occlusion/);
+  assert.match(html, /Preview resolution/);
+  assert.match(html, /2K/);
+});
+
+test("production server serves compiled client assets", async () => {
+  const { startProdServer } = await import("vinext/server/prod-server");
+  const { server, port } = await startProdServer({
+    port: 0,
+    host: "127.0.0.1",
+    outDir: fileURLToPath(new URL("../dist", import.meta.url)),
+    noCompression: true,
+    purpose: "test",
+  });
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/`);
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    const stylesheetPath = html.match(
+      /<link[^>]+rel="stylesheet"[^>]+href="([^"]+)"/i,
+    )?.[1];
+    assert.ok(stylesheetPath, "The production page should reference a stylesheet.");
+
+    const stylesheet = await fetch(
+      new URL(stylesheetPath, `http://127.0.0.1:${port}/`),
+    );
+    assert.equal(stylesheet.status, 200);
+    assert.match(stylesheet.headers.get("content-type") ?? "", /^text\/css\b/i);
+    assert.ok((await stylesheet.text()).length > 1_000);
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    });
+  }
 });
 
 test("keeps persistence local and creates only the PBR output node", async () => {
-  const [persistence, studio, preview, node, types, store, launcher, hosting] = await Promise.all([
+  const [persistence, studio, preview, node, types, store, launcher, hosting, evaluationHook, mapLab] = await Promise.all([
     readFile(new URL("../app/core/material-persistence.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/components/MaterialStudio.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/MaterialPreview.tsx", import.meta.url), "utf8"),
@@ -67,6 +103,8 @@ test("keeps persistence local and creates only the PBR output node", async () =>
     readFile(new URL("../app/core/material-store.ts", import.meta.url), "utf8"),
     readFile(new URL("../launcher/Program.cs", import.meta.url), "utf8"),
     readFile(new URL("../.openai/hosting.json", import.meta.url), "utf8"),
+    readFile(new URL("../app/core/use-material-evaluation.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/TextureMapLab.tsx", import.meta.url), "utf8"),
   ]);
   assert.match(persistence, /indexedDB\.open/);
   assert.match(persistence, /privacy:\s*"local-only"/);
@@ -108,6 +146,14 @@ test("keeps persistence local and creates only the PBR output node", async () =>
   assert.match(launcher, /app-port\.txt/);
   assert.match(launcher, /http_localhost_\*\.indexeddb\.leveldb/);
   assert.doesNotMatch(launcher, /TcpListener\(IPAddress\.Loopback,\s*0\)/);
+  assert.match(launcher, /EnsureProductionBuildAsync/);
+  assert.match(launcher, /run start -- --hostname 127\.0\.0\.1 --port/);
+  assert.doesNotMatch(launcher, /run dev -- --host 127\.0\.0\.1 --port/);
+  assert.match(evaluationHook, /INTERACTIVE_PREVIEW_EDGE\s*=\s*128/);
+  assert.match(evaluationHook, /FULL_PREVIEW_DELAY_MS\s*=\s*160/);
+  assert.match(evaluationHook, /generationIdRef/);
+  assert.match(evaluationHook, /clearTimeout\(fullResolutionTimer\)/);
+  assert.match(mapLab, /disabled=\{isGenerating\}/);
   assert.match(hosting, /"d1": null/);
   assert.match(hosting, /"r2": null/);
   await assert.rejects(access(new URL("app/_sites-preview", projectRoot)));

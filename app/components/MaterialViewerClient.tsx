@@ -59,6 +59,18 @@ const channels: Array<{ id: PreviewChannel; label: string }> = [
   { id: "ao", label: "AO" },
 ];
 
+type ViewerPreviewResolution = 256 | 512 | 1024 | 2048;
+
+const viewerPreviewResolutions: Array<{
+  value: ViewerPreviewResolution;
+  label: string;
+}> = [
+  { value: 256, label: "256 px" },
+  { value: 512, label: "512 px" },
+  { value: 1024, label: "1K" },
+  { value: 2048, label: "2K" },
+];
+
 function ViewerRangeField({
   label,
   value,
@@ -163,7 +175,17 @@ export function MaterialViewerClient() {
   const [notice, setNotice] = useState("Example material loaded");
   const [savedProjects, setSavedProjects] = useState<MaterialProject[]>([]);
   const [editorNodeId, setEditorNodeId] = useState("");
-  const { evaluation, isGenerating } = useMaterialEvaluation(project, 256);
+  const [previewResolution, setPreviewResolution] =
+    useState<ViewerPreviewResolution>(256);
+  const evaluationMaxEdge = project.sourceTexture ? previewResolution : 256;
+  const { evaluation, isGenerating } = useMaterialEvaluation(
+    project,
+    evaluationMaxEdge,
+  );
+  const previewResolutionLabel =
+    viewerPreviewResolutions.find(
+      (resolution) => resolution.value === previewResolution,
+    )?.label ?? `${previewResolution} px`;
   const editableNodes = useMemo(
     () => project.nodes.filter(
       (node) => node.data.kind !== "output" && node.data.kind !== "textureMap",
@@ -263,6 +285,20 @@ export function MaterialViewerClient() {
     setNotice("Map updated in the viewer");
   };
 
+  const changePreviewResolution = (value: string) => {
+    const resolution = Number(value) as ViewerPreviewResolution;
+    if (
+      !viewerPreviewResolutions.some((option) => option.value === resolution)
+    ) {
+      return;
+    }
+    setPreviewResolution(resolution);
+    const label =
+      viewerPreviewResolutions.find((option) => option.value === resolution)
+        ?.label ?? `${resolution} px`;
+    setNotice(`Regenerating maps at ${label}`);
+  };
+
   const saveTweaks = async () => {
     try {
       const updated = { ...project, updatedAt: new Date().toISOString() };
@@ -330,7 +366,14 @@ export function MaterialViewerClient() {
             <span className="eyebrow">Local material package</span>
             <h1>{project.name}</h1>
           </div>
-          <span className="viewer-status"><Check size={13} /> {isGenerating ? "Generating maps" : "Ready to inspect"}</span>
+          <span className="viewer-status">
+            <Check size={13} />
+            {project.sourceTexture
+              ? isGenerating
+                ? `Generating ${previewResolutionLabel} maps`
+                : `${evaluation.width}\u00d7${evaluation.height} maps ready`
+              : "Ready to inspect"}
+          </span>
         </div>
 
         <div className="viewer-channel-rail" aria-label="Material channel">
@@ -392,6 +435,28 @@ export function MaterialViewerClient() {
         <section className="viewer-maps-section">
           <span className="eyebrow">Generated outputs</span>
           <h2>Maps</h2>
+          <label className="viewer-resolution-picker">
+            <span>
+              <strong>Preview resolution</strong>
+              <small>
+                {project.sourceTexture
+                  ? "Regenerate the live maps up to a 2K max edge."
+                  : "High-resolution regeneration requires an image material."}
+              </small>
+            </span>
+            <select
+              aria-label="Preview map resolution"
+              value={previewResolution}
+              onChange={(event) => changePreviewResolution(event.target.value)}
+              disabled={!project.sourceTexture}
+            >
+              {viewerPreviewResolutions.map((resolution) => (
+                <option key={resolution.value} value={resolution.value}>
+                  {resolution.label}
+                </option>
+              ))}
+            </select>
+          </label>
           <div className="viewer-map-grid">
             {textureChannels.map((item) => (
               <button
@@ -420,6 +485,7 @@ export function MaterialViewerClient() {
               exportResolution={project.exportResolution}
               evaluation={evaluation}
               projectName={project.name}
+              isGenerating={isGenerating}
               onUpdate={updateMapSettings}
               onReset={() => {
                 setProject((current) => ({

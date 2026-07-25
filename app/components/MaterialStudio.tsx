@@ -1102,6 +1102,7 @@ function StudioWorkspace() {
                 exportResolution={exportResolution}
                 evaluation={evaluation}
                 projectName={projectName}
+                isGenerating={isGenerating}
                 onUpdate={updateMapSettings}
                 onChangeStart={checkpoint}
                 onReset={resetMapSettings}

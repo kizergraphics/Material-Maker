@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Text;
 using Microsoft.Win32;
 
 namespace MaterialMakerLauncher;
@@ -13,6 +14,7 @@ internal static class Program
     private const string MutexName = @"Local\ForgeMaterialStudioLauncher";
     private const int DefaultAppPort = 54581;
     private const string AppPortFileName = "app-port.txt";
+    private const string ProductionBuildMarkerFileName = "production-build.sha256";
     private const uint JobObjectLimitKillOnJobClose = 0x00002000;
 
     private static readonly object CleanupLock = new();
@@ -101,6 +103,7 @@ internal static class Program
         serverJob = CreateKillOnCloseJob();
 
         await EnsureDependenciesAsync(projectRoot, stateDirectory, npmPath);
+        await EnsureProductionBuildAsync(projectRoot, stateDirectory, npmPath, startupForm);
 
         startupForm.SetStatus("Starting the local Material Maker service…");
         var port = ResolveAppPort(stateDirectory);
@@ -108,7 +111,7 @@ internal static class Program
         var url = "http://localhost:" + port;
         StartServer(projectRoot, npmPath, port);
         await WaitForServerAsync(url, TimeSpan.FromSeconds(90));
-        Log("Development server is ready at " + url);
+        Log("Local production server is ready at " + url);
 
         if (args.Any(argument => argument.Equals("--smoke-test", StringComparison.OrdinalIgnoreCase)))
         {
@@ -225,6 +228,108 @@ internal static class Program
         return Convert.ToHexString(SHA256.HashData(stream));
     }
 
+    private static async Task EnsureProductionBuildAsync(
+        string projectRoot,
+        string stateDirectory,
+        string npmPath,
+        StartupForm startupForm)
+    {
+        var serverEntryPath = Path.Combine(projectRoot, "dist", "server", "index.js");
+        var clientOutputPath = Path.Combine(projectRoot, "dist", "client");
+        var markerPath = Path.Combine(stateDirectory, ProductionBuildMarkerFileName);
+        var buildFingerprint = ComputeProductionBuildFingerprint(projectRoot);
+        var installedFingerprint = File.Exists(markerPath)
+            ? File.ReadAllText(markerPath).Trim()
+            : string.Empty;
+        var hasProductionOutput =
+            File.Exists(serverEntryPath) &&
+            Directory.Exists(clientOutputPath);
+
+        if (hasProductionOutput && installedFingerprint == buildFingerprint)
+        {
+            Log("Production build is current.");
+            return;
+        }
+
+        if (hasProductionOutput &&
+            string.IsNullOrEmpty(installedFingerprint) &&
+            ProductionBuildIsNewerThanInputs(projectRoot, serverEntryPath))
+        {
+            File.WriteAllText(markerPath, buildFingerprint);
+            Log("Existing production build was adopted.");
+            return;
+        }
+
+        startupForm.SetStatus("Updating Material Maker for the latest project files...");
+        Log("Creating a fresh production build.");
+        var exitCode = await RunNpmCommandAsync(projectRoot, npmPath, "run build");
+        if (exitCode != 0 || !File.Exists(serverEntryPath))
+        {
+            throw new InvalidOperationException(
+                "Material Maker's production build could not be created. Check the launcher log for details.");
+        }
+
+        File.WriteAllText(markerPath, buildFingerprint);
+        Log("Production build is ready.");
+    }
+
+    private static string ComputeProductionBuildFingerprint(string projectRoot)
+    {
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        foreach (var filePath in EnumerateProductionBuildInputs(projectRoot))
+        {
+            var relativePath = Path
+                .GetRelativePath(projectRoot, filePath)
+                .Replace(Path.DirectorySeparatorChar, '/');
+            hash.AppendData(Encoding.UTF8.GetBytes(relativePath));
+            hash.AppendData(File.ReadAllBytes(filePath));
+        }
+
+        return Convert.ToHexString(hash.GetHashAndReset());
+    }
+
+    private static bool ProductionBuildIsNewerThanInputs(
+        string projectRoot,
+        string serverEntryPath)
+    {
+        var buildTime = File.GetLastWriteTimeUtc(serverEntryPath);
+        return EnumerateProductionBuildInputs(projectRoot)
+            .All(path => File.GetLastWriteTimeUtc(path) <= buildTime);
+    }
+
+    private static IEnumerable<string> EnumerateProductionBuildInputs(string projectRoot)
+    {
+        var rootFiles = new[]
+        {
+            "package.json",
+            "package-lock.json",
+            "vite.config.ts",
+            "next.config.ts",
+            "tsconfig.json",
+            "postcss.config.mjs",
+            Path.Combine(".openai", "hosting.json")
+        };
+        var sourceDirectories = new[]
+        {
+            "app",
+            "build",
+            "db",
+            "drizzle",
+            "public",
+            "worker"
+        };
+        var files = rootFiles
+            .Select(path => Path.Combine(projectRoot, path))
+            .Where(File.Exists)
+            .Concat(
+                sourceDirectories
+                    .Select(path => Path.Combine(projectRoot, path))
+                    .Where(Directory.Exists)
+                    .SelectMany(path => Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories)));
+
+        return files.OrderBy(path => path, StringComparer.OrdinalIgnoreCase);
+    }
+
     private static async Task<int> RunNpmCommandAsync(
         string workingDirectory,
         string npmPath,
@@ -245,17 +350,17 @@ internal static class Program
 
     private static void StartServer(string projectRoot, string npmPath, int port)
     {
-        var npmArguments = "run dev -- --host 127.0.0.1 --port " + port;
+        var npmArguments = "run start -- --hostname 127.0.0.1 --port " + port;
         serverProcess = CreateLoggedProcess(
             GetCommandProcessor(),
             BuildCommandArguments(npmPath, npmArguments),
             projectRoot);
 
         serverProcess.Start();
-        AssignProcessToJobOrThrow(serverJob, serverProcess, "development server");
+        AssignProcessToJobOrThrow(serverJob, serverProcess, "production server");
         serverProcess.BeginOutputReadLine();
         serverProcess.BeginErrorReadLine();
-        Log("Development server process started.");
+        Log("Local production server process started.");
     }
 
     private static Process CreateLoggedProcess(

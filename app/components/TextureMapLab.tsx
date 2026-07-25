@@ -226,6 +226,7 @@ export function TextureMapInspector({
   exportResolution,
   evaluation,
   projectName,
+  isGenerating = false,
   onUpdate,
   onChangeStart = () => undefined,
   onReset,
@@ -237,6 +238,7 @@ export function TextureMapInspector({
   exportResolution: ExportResolution;
   evaluation: MaterialEvaluation;
   projectName: string;
+  isGenerating?: boolean;
   onUpdate: (map: keyof MapGenerationSettings, values: Record<string, number | boolean>) => void;
   onChangeStart?: () => void;
   onReset: () => void;
@@ -244,7 +246,7 @@ export function TextureMapInspector({
   note?: string;
 }) {
   const downloadCurrent = async () => {
-    if (channel === "material") return;
+    if (channel === "material" || isGenerating) return;
     const canvas = pixelsToCanvas(
       pixelsForChannel(evaluation, channel),
       evaluation.width,
@@ -371,7 +373,11 @@ export function TextureMapInspector({
       ) : null}
 
       {channel !== "material" ? (
-        <button className="button button--ghost map-download-button" onClick={() => void downloadCurrent()}>
+        <button
+          className="button button--ghost map-download-button"
+          onClick={() => void downloadCurrent()}
+          disabled={isGenerating}
+        >
           <Download size={13} /> Download {mapTitles[channel]} PNG
         </button>
       ) : null}

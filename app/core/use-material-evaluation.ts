@@ -15,7 +15,11 @@ type SourceGeneration = {
   source: NonNullable<MaterialProject["sourceTexture"]>;
   maxEdge: number;
   settings: MaterialProject["mapSettings"];
+  evaluation: MaterialEvaluation;
 };
+
+const INTERACTIVE_PREVIEW_EDGE = 128;
+const FULL_PREVIEW_DELAY_MS = 160;
 
 function channelPixelsChanged(
   previous: MaterialProject["mapSettings"],
@@ -48,88 +52,171 @@ export function useMaterialEvaluation(
   const [error, setError] = useState<string | null>(null);
   const preparedRef = useRef<{
     source: NonNullable<MaterialProject["sourceTexture"]>;
-    maxEdge: number;
-    promise: Promise<PreparedSourceTexture>;
+    promises: Map<number, Promise<PreparedSourceTexture>>;
   } | null>(null);
-  const generatedRef = useRef<SourceGeneration | null>(null);
+  const completedRef = useRef<SourceGeneration | null>(null);
+  const generationIdRef = useRef(0);
 
   useEffect(() => {
+    const generationId = generationIdRef.current + 1;
+    generationIdRef.current = generationId;
     let active = true;
+    let frame = 0;
+    let fullResolutionTimer = 0;
+    const isCurrent = () =>
+      active && generationIdRef.current === generationId;
+
     if (!project.sourceTexture) {
       preparedRef.current = null;
-      generatedRef.current = null;
+      completedRef.current = null;
       return () => {
         active = false;
       };
     }
 
     const source = project.sourceTexture;
-    if (
-      !preparedRef.current ||
-      preparedRef.current.source !== source ||
-      preparedRef.current.maxEdge !== maxEdge
-    ) {
+    if (!preparedRef.current || preparedRef.current.source !== source) {
       preparedRef.current = {
         source,
-        maxEdge,
-        promise: prepareSourceTexture(source, maxEdge),
+        promises: new Map(),
       };
     }
 
-    const previous = generatedRef.current;
-    const generateAll =
-      !previous ||
-      previous.source !== source ||
-      previous.maxEdge !== maxEdge;
-    const changedChannels = generateAll
-      ? textureMapChannels
-      : textureMapChannels.filter((channel) =>
-          channelPixelsChanged(previous.settings, project.mapSettings, channel),
-        );
+    const getPrepared = (edge: number) => {
+      const cache = preparedRef.current!;
+      const cached = cache.promises.get(edge);
+      if (cached) return cached;
+      const promise = prepareSourceTexture(source, edge);
+      cache.promises.set(edge, promise);
+      return promise;
+    };
+
+    const completed = completedRef.current;
+    const hasCompletedFullResolution =
+      completed?.source === source &&
+      completed.maxEdge === maxEdge;
+    const changedChannels = hasCompletedFullResolution
+      ? textureMapChannels.filter((channel) =>
+          channelPixelsChanged(
+            completed.settings,
+            project.mapSettings,
+            channel,
+          ),
+        )
+      : textureMapChannels;
 
     // Enabling or disabling a map only affects preview composition; its pixel
     // buffer remains valid and does not need to be regenerated.
-    if (!generateAll && changedChannels.length === 0) {
-      generatedRef.current = { source, maxEdge, settings: project.mapSettings };
+    if (hasCompletedFullResolution && changedChannels.length === 0) {
+      completedRef.current = {
+        ...completed,
+        settings: project.mapSettings,
+      };
+      frame = window.requestAnimationFrame(() => {
+        if (!isCurrent()) return;
+        setEvaluation(completed.evaluation);
+        setGenerating(false);
+      });
       return () => {
         active = false;
+        window.cancelAnimationFrame(frame);
       };
     }
 
-    setGenerating(true);
-    const frame = window.requestAnimationFrame(() => {
-      void preparedRef.current!.promise
-        .then((prepared) => {
-          if (!active) return;
-          if (generateAll) {
-            setEvaluation(generatePreparedMaps(prepared, project.mapSettings));
-          } else {
-            const updates = Object.assign(
-              {},
-              ...changedChannels.map((channel) =>
-                generateDerivedMap(prepared, project.mapSettings, channel),
-              ),
-            );
-            setEvaluation((current) => ({ ...current, ...updates }));
-          }
-          generatedRef.current = {
-            source,
-            maxEdge,
-            settings: project.mapSettings,
+    const generateFullResolution = async () => {
+      try {
+        const prepared = await getPrepared(maxEdge);
+        if (!isCurrent()) return;
+
+        const latestCompleted = completedRef.current;
+        const generateAll =
+          latestCompleted?.source !== source ||
+          latestCompleted.maxEdge !== maxEdge;
+        let nextEvaluation: MaterialEvaluation;
+
+        if (generateAll) {
+          nextEvaluation = generatePreparedMaps(prepared, project.mapSettings);
+        } else {
+          const fullResolutionChanges = textureMapChannels.filter((channel) =>
+            channelPixelsChanged(
+              latestCompleted.settings,
+              project.mapSettings,
+              channel,
+            ),
+          );
+          const updates = Object.assign(
+            {},
+            ...fullResolutionChanges.map((channel) =>
+              generateDerivedMap(prepared, project.mapSettings, channel),
+            ),
+          );
+          nextEvaluation = {
+            ...latestCompleted.evaluation,
+            ...updates,
           };
+        }
+
+        if (!isCurrent()) return;
+        completedRef.current = {
+          source,
+          maxEdge,
+          settings: project.mapSettings,
+          evaluation: nextEvaluation,
+        };
+        setEvaluation(nextEvaluation);
+        setError(null);
+      } catch (reason) {
+        if (!isCurrent()) return;
+        setError(
+          reason instanceof Error ? reason.message : "Map generation failed.",
+        );
+      } finally {
+        if (isCurrent()) setGenerating(false);
+      }
+    };
+
+    frame = window.requestAnimationFrame(() => {
+      setGenerating(true);
+      const interactiveEdge = Math.min(INTERACTIVE_PREVIEW_EDGE, maxEdge);
+      void getPrepared(interactiveEdge)
+        .then((prepared) => {
+          if (!isCurrent()) return;
+          const interactiveEvaluation = generatePreparedMaps(
+            prepared,
+            project.mapSettings,
+          );
+          if (!isCurrent()) return;
+          setEvaluation(interactiveEvaluation);
           setError(null);
+
+          if (interactiveEdge === maxEdge) {
+            completedRef.current = {
+              source,
+              maxEdge,
+              settings: project.mapSettings,
+              evaluation: interactiveEvaluation,
+            };
+            setGenerating(false);
+            return;
+          }
+
+          fullResolutionTimer = window.setTimeout(() => {
+            void generateFullResolution();
+          }, FULL_PREVIEW_DELAY_MS);
         })
         .catch((reason) => {
-          if (!active) return;
-          setError(reason instanceof Error ? reason.message : "Map generation failed.");
-        })
-        .finally(() => {
-          if (active) setGenerating(false);
+          if (!isCurrent()) return;
+          setError(
+            reason instanceof Error ? reason.message : "Map generation failed.",
+          );
+          setGenerating(false);
         });
     });
+
     return () => {
       active = false;
       window.cancelAnimationFrame(frame);
+      window.clearTimeout(fullResolutionTimer);
     };
   }, [graphEvaluation, maxEdge, project.mapSettings, project.sourceTexture]);
 
