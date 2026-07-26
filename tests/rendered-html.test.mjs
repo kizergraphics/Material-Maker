@@ -93,8 +93,42 @@ test("production server serves compiled client assets", async () => {
   }
 });
 
+test("keeps Babylon and Map Lab out of the initial studio and viewer bundles", async () => {
+  const manifest = JSON.parse(
+    await readFile(
+      new URL("../dist/client/.vite/manifest.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  const studioKey = "app/components/MaterialStudio.tsx";
+  const viewerKey = "app/components/MaterialViewerClient.tsx";
+  const previewKey = "app/components/MaterialPreview.tsx";
+  const mapLabKey = "app/components/TextureMapLab.tsx";
+
+  const staticImportsFor = (entryKey) => {
+    const imports = new Set();
+    const visit = (key) => {
+      if (imports.has(key)) return;
+      imports.add(key);
+      for (const importedKey of manifest[key]?.imports ?? []) {
+        visit(importedKey);
+      }
+    };
+    visit(entryKey);
+    return imports;
+  };
+
+  assert.equal(manifest[previewKey]?.isDynamicEntry, true);
+  assert.equal(manifest[mapLabKey]?.isDynamicEntry, true);
+  for (const entryKey of [studioKey, viewerKey]) {
+    const staticImports = staticImportsFor(entryKey);
+    assert.equal(staticImports.has(previewKey), false);
+    assert.equal(staticImports.has(mapLabKey), false);
+  }
+});
+
 test("keeps persistence local and creates only the PBR output node", async () => {
-  const [persistence, studio, preview, node, types, store, launcher, hosting, evaluationHook, mapLab, generationWorker] = await Promise.all([
+  const [persistence, studio, preview, node, types, store, launcher, hosting, evaluationHook, mapLab, generationWorker, deferredTools] = await Promise.all([
     readFile(new URL("../app/core/material-persistence.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/components/MaterialStudio.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/MaterialPreview.tsx", import.meta.url), "utf8"),
@@ -106,6 +140,7 @@ test("keeps persistence local and creates only the PBR output node", async () =>
     readFile(new URL("../app/core/use-material-evaluation.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/components/TextureMapLab.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/workers/material-generation.worker.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/DeferredMaterialTools.tsx", import.meta.url), "utf8"),
   ]);
   assert.match(persistence, /indexedDB\.open/);
   assert.match(persistence, /privacy:\s*"local-only"/);
@@ -161,6 +196,9 @@ test("keeps persistence local and creates only the PBR output node", async () =>
   assert.match(studio, /graphThumbnailCacheRef/);
   assert.match(studio, /graphNodeSignature/);
   assert.match(mapLab, /disabled=\{isGenerating\}/);
+  assert.match(deferredTools, /lazy\(\(\)\s*=>/);
+  assert.match(deferredTools, /import\("\.\/MaterialPreview"\)/);
+  assert.match(deferredTools, /import\("\.\/TextureMapLab"\)/);
   assert.match(hosting, /"d1": null/);
   assert.match(hosting, /"r2": null/);
   await assert.rejects(access(new URL("app/_sites-preview", projectRoot)));

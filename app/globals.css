@@ -1418,6 +1418,57 @@ input:focus-visible {
   border-bottom: 1px solid var(--line);
 }
 
+.deferred-tool-loading {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+
+.deferred-tool-loading__spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid rgba(255, 255, 255, 0.12);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.material-preview--loading {
+  min-height: 300px;
+}
+
+.deferred-tool-loading--workbench {
+  min-height: 100%;
+}
+
+.deferred-tool-loading--inspector {
+  min-height: 220px;
+}
+
+.texture-map-canvas--loading {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background:
+    linear-gradient(110deg, transparent 35%, rgba(255, 255, 255, 0.06), transparent 65%),
+    #151a1f;
+  background-size: 220% 100%;
+  animation: deferred-map-loading 1.2s ease-in-out infinite;
+}
+
+@keyframes deferred-map-loading {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
 .material-preview__canvas {
   display: block;
   width: 100%;

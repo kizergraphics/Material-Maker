@@ -85,9 +85,12 @@ import {
   type PreviewShape,
   type TextureMapChannel,
 } from "../core/material-types";
+import {
+  DeferredMaterialPreview,
+  DeferredTextureMapInspector,
+  DeferredTextureMapWorkbench,
+} from "./DeferredMaterialTools";
 import { MaterialNode } from "./MaterialNode";
-import { MaterialPreview } from "./MaterialPreview";
-import { TextureMapInspector, TextureMapWorkbench } from "./TextureMapLab";
 
 const nodeTypes: NodeTypes = { materialNode: MaterialNode };
 
@@ -1107,7 +1110,7 @@ function StudioWorkspace() {
 
         {hasActiveProject ? <>
         {workspaceView === "maps" && sourceTexture ? (
-          <TextureMapWorkbench
+          <DeferredTextureMapWorkbench
             evaluation={evaluation}
             source={sourceTexture}
             settings={mapSettings}
@@ -1186,7 +1189,7 @@ function StudioWorkspace() {
             </div>
           </div>
 
-          <MaterialPreview
+          <DeferredMaterialPreview
             evaluation={evaluation}
             shape={preview.shape}
             channel={preview.channel}
@@ -1213,7 +1216,7 @@ function StudioWorkspace() {
 
           <div className="inspector-panel">
             {sourceTexture ? (
-              <TextureMapInspector
+              <DeferredTextureMapInspector
                 channel={preview.channel}
                 settings={mapSettings}
                 exportResolution={exportResolution}

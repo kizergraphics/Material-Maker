@@ -41,13 +41,13 @@ import {
   type NodeValueMap,
   type PreviewChannel,
   type PreviewShape,
+  type TextureMapChannel,
 } from "../core/material-types";
-import { MaterialPreview } from "./MaterialPreview";
 import {
-  TextureMapCanvas,
-  TextureMapInspector,
-  textureChannels,
-} from "./TextureMapLab";
+  DeferredMaterialPreview,
+  DeferredTextureMapCanvas,
+  DeferredTextureMapInspector,
+} from "./DeferredMaterialTools";
 
 const channels: Array<{ id: PreviewChannel; label: string }> = [
   { id: "material", label: "Beauty" },
@@ -57,6 +57,19 @@ const channels: Array<{ id: PreviewChannel; label: string }> = [
   { id: "roughness", label: "Roughness" },
   { id: "metallic", label: "Metallic" },
   { id: "ao", label: "AO" },
+];
+
+const textureChannels: Array<{
+  id: TextureMapChannel;
+  label: string;
+  space: string;
+}> = [
+  { id: "baseColor", label: "Albedo", space: "sRGB" },
+  { id: "height", label: "Height", space: "Linear" },
+  { id: "normal", label: "Normal", space: "Linear" },
+  { id: "roughness", label: "Roughness", space: "Linear" },
+  { id: "metallic", label: "Metallic", space: "Linear" },
+  { id: "ao", label: "Ambient occlusion", space: "Linear" },
 ];
 
 type ViewerPreviewResolution = 256 | 512 | 1024 | 2048;
@@ -351,7 +364,7 @@ export function MaterialViewerClient() {
       </header>
 
       <section className="viewer-stage">
-        <MaterialPreview
+        <DeferredMaterialPreview
           evaluation={evaluation}
           shape={shape}
           channel={channel}
@@ -466,7 +479,7 @@ export function MaterialViewerClient() {
                 aria-label={`Edit ${item.label} map`}
               >
                 <span className="viewer-map-thumbnail">
-                  <TextureMapCanvas evaluation={evaluation} channel={item.id} />
+                  <DeferredTextureMapCanvas evaluation={evaluation} channel={item.id} />
                 </span>
                 <span>
                   <strong>{item.label}</strong>
@@ -479,7 +492,7 @@ export function MaterialViewerClient() {
 
         {project.sourceTexture ? (
           <section className="viewer-editor-section">
-            <TextureMapInspector
+            <DeferredTextureMapInspector
               channel={channel}
               settings={project.mapSettings}
               exportResolution={project.exportResolution}
