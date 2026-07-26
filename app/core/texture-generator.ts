@@ -162,7 +162,7 @@ const generationWarnings = [
   "Metallic maps cannot be identified reliably from color alone; verify the metallic controls for your material.",
 ];
 
-function prepareSourcePixels(
+export function prepareSourcePixels(
   source: Uint8ClampedArray,
   width: number,
   height: number,

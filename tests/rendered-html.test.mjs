@@ -94,7 +94,7 @@ test("production server serves compiled client assets", async () => {
 });
 
 test("keeps persistence local and creates only the PBR output node", async () => {
-  const [persistence, studio, preview, node, types, store, launcher, hosting, evaluationHook, mapLab] = await Promise.all([
+  const [persistence, studio, preview, node, types, store, launcher, hosting, evaluationHook, mapLab, generationWorker] = await Promise.all([
     readFile(new URL("../app/core/material-persistence.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/components/MaterialStudio.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/MaterialPreview.tsx", import.meta.url), "utf8"),
@@ -105,6 +105,7 @@ test("keeps persistence local and creates only the PBR output node", async () =>
     readFile(new URL("../.openai/hosting.json", import.meta.url), "utf8"),
     readFile(new URL("../app/core/use-material-evaluation.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/components/TextureMapLab.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/workers/material-generation.worker.ts", import.meta.url), "utf8"),
   ]);
   assert.match(persistence, /indexedDB\.open/);
   assert.match(persistence, /privacy:\s*"local-only"/);
@@ -153,6 +154,12 @@ test("keeps persistence local and creates only the PBR output node", async () =>
   assert.match(evaluationHook, /FULL_PREVIEW_DELAY_MS\s*=\s*160/);
   assert.match(evaluationHook, /generationIdRef/);
   assert.match(evaluationHook, /clearTimeout\(fullResolutionTimer\)/);
+  assert.match(evaluationHook, /new Worker\(/);
+  assert.match(evaluationHook, /worker\.terminate\(\)/);
+  assert.match(generationWorker, /OffscreenCanvas/);
+  assert.match(generationWorker, /transferablesFor/);
+  assert.match(studio, /graphThumbnailCacheRef/);
+  assert.match(studio, /graphNodeSignature/);
   assert.match(mapLab, /disabled=\{isGenerating\}/);
   assert.match(hosting, /"d1": null/);
   assert.match(hosting, /"r2": null/);

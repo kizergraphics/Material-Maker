@@ -169,11 +169,67 @@ function createMapThumbnails(evaluation: MaterialEvaluation) {
   })) as Partial<Record<TextureMapChannel, string>>;
 }
 
+type GraphThumbnailCacheEntry = {
+  signature: string;
+  pixels?: Uint8ClampedArray;
+  width: number;
+  height: number;
+  thumbnail: string;
+};
+
+function nodeValueSignature(node: MaterialGraphNode) {
+  return Object.entries(node.data.values)
+    .filter(([key]) => key !== "thumbnail")
+    .sort(([left], [right]) => left.localeCompare(right));
+}
+
+function graphNodeSignature(
+  nodeId: string,
+  nodesById: Map<string, MaterialGraphNode>,
+  edges: MaterialProject["edges"],
+  signatures: Map<string, string>,
+  stack = new Set<string>(),
+): string {
+  const cached = signatures.get(nodeId);
+  if (cached) return cached;
+  const node = nodesById.get(nodeId);
+  if (!node) return `missing:${nodeId}`;
+  if (stack.has(nodeId)) return `cycle:${nodeId}`;
+
+  stack.add(nodeId);
+  const inputs = edges
+    .map((edge, index) => ({ edge, index }))
+    .filter(({ edge }) => edge.target === nodeId)
+    .map(({ edge, index }) => [
+      index,
+      edge.targetHandle ?? "",
+      edge.sourceHandle ?? "",
+      graphNodeSignature(edge.source, nodesById, edges, signatures, stack),
+    ]);
+  stack.delete(nodeId);
+
+  const signature = JSON.stringify([
+    node.data.kind,
+    nodeValueSignature(node),
+    inputs,
+  ]);
+  signatures.set(nodeId, signature);
+  return signature;
+}
+
 function createGraphNodeThumbnails(
   nodes: MaterialGraphNode[],
   edges: MaterialProject["edges"],
   evaluation: MaterialEvaluation,
+  cache: Map<string, GraphThumbnailCacheEntry>,
 ) {
+  const nodesById = new Map(nodes.map((node) => [node.id, node]));
+  const signatures = new Map<string, string>();
+  const liveNodeIds = new Set(nodes.map((node) => node.id));
+  for (const nodeId of cache.keys()) {
+    if (!liveNodeIds.has(nodeId)) cache.delete(nodeId);
+  }
+
   return Object.fromEntries(nodes.map((node) => {
     const mapChannel = node.data.values.mapChannel;
     if (
@@ -181,29 +237,80 @@ function createGraphNodeThumbnails(
       mapChannel &&
       generatedMapChannels.includes(mapChannel)
     ) {
-      return [
-        node.id,
-        createThumbnail(
-          pixelsForChannel(evaluation, mapChannel),
-          evaluation.width,
-          evaluation.height,
-        ),
-      ];
+      const pixels = pixelsForChannel(evaluation, mapChannel);
+      const signature = `generated:${mapChannel}`;
+      const cached = cache.get(node.id);
+      if (
+        cached?.signature === signature &&
+        cached.pixels === pixels &&
+        cached.width === evaluation.width &&
+        cached.height === evaluation.height
+      ) {
+        return [node.id, cached.thumbnail];
+      }
+      const thumbnail = createThumbnail(
+        pixels,
+        evaluation.width,
+        evaluation.height,
+      );
+      cache.set(node.id, {
+        signature,
+        pixels,
+        width: evaluation.width,
+        height: evaluation.height,
+        thumbnail,
+      });
+      return [node.id, thumbnail];
     }
+
     if (node.data.kind === "output") {
-      return [
-        node.id,
-        createThumbnail(evaluation.albedo, evaluation.width, evaluation.height),
-      ];
+      const signature = "output:albedo";
+      const cached = cache.get(node.id);
+      if (
+        cached?.signature === signature &&
+        cached.pixels === evaluation.albedo &&
+        cached.width === evaluation.width &&
+        cached.height === evaluation.height
+      ) {
+        return [node.id, cached.thumbnail];
+      }
+      const thumbnail = createThumbnail(
+        evaluation.albedo,
+        evaluation.width,
+        evaluation.height,
+      );
+      cache.set(node.id, {
+        signature,
+        pixels: evaluation.albedo,
+        width: evaluation.width,
+        height: evaluation.height,
+        thumbnail,
+      });
+      return [node.id, thumbnail];
     }
-    return [
+
+    const signature = graphNodeSignature(
       node.id,
-      createThumbnail(
-        evaluateNodeMap({ nodes, edges }, node.id, 64),
-        64,
-        64,
-      ),
-    ];
+      nodesById,
+      edges,
+      signatures,
+    );
+    const cached = cache.get(node.id);
+    if (cached?.signature === signature) {
+      return [node.id, cached.thumbnail];
+    }
+    const thumbnail = createThumbnail(
+      evaluateNodeMap({ nodes, edges }, node.id, 64),
+      64,
+      64,
+    );
+    cache.set(node.id, {
+      signature,
+      width: 64,
+      height: 64,
+      thumbnail,
+    });
+    return [node.id, thumbnail];
   })) as Record<string, string>;
 }
 
@@ -451,6 +558,9 @@ function StudioWorkspace() {
   const [savedProjects, setSavedProjects] = useState<MaterialProject[]>([]);
   const [isHelpOpen, setHelpOpen] = useState(false);
   const [graphNodeThumbnails, setGraphNodeThumbnails] = useState<Record<string, string>>({});
+  const graphThumbnailCacheRef = useRef(
+    new Map<string, GraphThumbnailCacheEntry>(),
+  );
 
   const projectId = useMaterialStore((state) => state.projectId);
   const projectName = useMaterialStore((state) => state.projectName);
@@ -508,7 +618,14 @@ function StudioWorkspace() {
   useEffect(() => {
     if (workspaceView !== "graph") return;
     const frame = window.requestAnimationFrame(() => {
-      setGraphNodeThumbnails(createGraphNodeThumbnails(nodes, edges, evaluation));
+      setGraphNodeThumbnails(
+        createGraphNodeThumbnails(
+          nodes,
+          edges,
+          evaluation,
+          graphThumbnailCacheRef.current,
+        ),
+      );
     });
     return () => window.cancelAnimationFrame(frame);
   }, [edges, evaluation, nodes, workspaceView]);

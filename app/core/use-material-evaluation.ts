@@ -1,7 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { evaluateMaterial, type MaterialEvaluation } from "./material-evaluator";
+import {
+  evaluateMaterial,
+  type MaterialEvaluation,
+} from "./material-evaluator";
+import type {
+  GeneratedMapsPayload,
+  MaterialGenerationWorkerRequest,
+  MaterialGenerationWorkerResponse,
+} from "./material-generation-worker-types";
 import type { MaterialProject } from "./material-types";
 import {
   generateDerivedMap,
@@ -16,6 +24,19 @@ type SourceGeneration = {
   maxEdge: number;
   settings: MaterialProject["mapSettings"];
   evaluation: MaterialEvaluation;
+};
+
+type PendingWorkerRequest = {
+  generationId: number;
+  resolve: (payload: GeneratedMapsPayload) => void;
+  reject: (reason: unknown) => void;
+};
+
+type GenerationWorkerState = {
+  source: NonNullable<MaterialProject["sourceTexture"]>;
+  worker: Worker;
+  nextRequestId: number;
+  pending: Map<number, PendingWorkerRequest>;
 };
 
 const INTERACTIVE_PREVIEW_EDGE = 128;
@@ -41,14 +62,18 @@ export function useMaterialEvaluation(
   maxEdge: number,
 ) {
   const graphEvaluation = useMemo(
-    () => evaluateMaterial(
-      { nodes: project.nodes, edges: project.edges },
-      maxEdge,
-    ),
+    () =>
+      evaluateMaterial(
+        { nodes: project.nodes, edges: project.edges },
+        maxEdge,
+      ),
     [maxEdge, project.edges, project.nodes],
   );
-  const [evaluation, setEvaluation] = useState<MaterialEvaluation>(graphEvaluation);
-  const [isGenerating, setGenerating] = useState(Boolean(project.sourceTexture));
+  const [evaluation, setEvaluation] =
+    useState<MaterialEvaluation>(graphEvaluation);
+  const [isGenerating, setGenerating] = useState(
+    Boolean(project.sourceTexture),
+  );
   const [error, setError] = useState<string | null>(null);
   const preparedRef = useRef<{
     source: NonNullable<MaterialProject["sourceTexture"]>;
@@ -56,6 +81,22 @@ export function useMaterialEvaluation(
   } | null>(null);
   const completedRef = useRef<SourceGeneration | null>(null);
   const generationIdRef = useRef(0);
+  const workerRef = useRef<GenerationWorkerState | null>(null);
+  const workerDisabledRef = useRef(false);
+
+  useEffect(
+    () => () => {
+      const state = workerRef.current;
+      if (!state) return;
+      state.worker.terminate();
+      for (const pending of state.pending.values()) {
+        pending.reject(new Error("Map generation was cancelled."));
+      }
+      state.pending.clear();
+      workerRef.current = null;
+    },
+    [],
+  );
 
   useEffect(() => {
     const generationId = generationIdRef.current + 1;
@@ -66,9 +107,34 @@ export function useMaterialEvaluation(
     const isCurrent = () =>
       active && generationIdRef.current === generationId;
 
+    const terminateWorker = (reason: Error) => {
+      const state = workerRef.current;
+      if (!state) return;
+      state.worker.terminate();
+      workerRef.current = null;
+      for (const pending of state.pending.values()) {
+        pending.reject(reason);
+      }
+      state.pending.clear();
+    };
+
+    const cancelWorkerGeneration = () => {
+      const state = workerRef.current;
+      if (
+        state &&
+        [...state.pending.values()].some(
+          (pending) => pending.generationId === generationId,
+        )
+      ) {
+        terminateWorker(new Error("Map generation was cancelled."));
+      }
+    };
+
     if (!project.sourceTexture) {
       preparedRef.current = null;
       completedRef.current = null;
+      workerDisabledRef.current = false;
+      terminateWorker(new Error("The source texture was removed."));
       return () => {
         active = false;
       };
@@ -80,6 +146,7 @@ export function useMaterialEvaluation(
         source,
         promises: new Map(),
       };
+      workerDisabledRef.current = false;
     }
 
     const getPrepared = (edge: number) => {
@@ -91,10 +158,129 @@ export function useMaterialEvaluation(
       return promise;
     };
 
+    const ensureWorker = () => {
+      const current = workerRef.current;
+      if (current?.source === source) return current;
+      if (current) {
+        terminateWorker(new Error("The source texture changed."));
+      }
+
+      const worker = new Worker(
+        new URL("../workers/material-generation.worker.ts", import.meta.url),
+        { type: "module", name: "forge-map-generation" },
+      );
+      const state: GenerationWorkerState = {
+        source,
+        worker,
+        nextRequestId: 0,
+        pending: new Map(),
+      };
+      workerRef.current = state;
+      worker.onmessage = (
+        event: MessageEvent<MaterialGenerationWorkerResponse>,
+      ) => {
+        const response = event.data;
+        const pending = state.pending.get(response.requestId);
+        if (!pending) return;
+        state.pending.delete(response.requestId);
+        if (response.type === "error") {
+          pending.reject(new Error(response.message));
+          return;
+        }
+        pending.resolve({
+          result: response.result,
+          width: response.width,
+          height: response.height,
+          full: response.full,
+        });
+      };
+      worker.onerror = () => {
+        if (workerRef.current === state) {
+          terminateWorker(new Error("The map generation worker failed."));
+        }
+      };
+      const initialize: MaterialGenerationWorkerRequest = {
+        type: "initialize",
+        source,
+      };
+      worker.postMessage(initialize);
+      return state;
+    };
+
+    const generateInWorker = (
+      edge: number,
+      channels: (typeof textureMapChannels)[number][],
+    ) => {
+      const state = ensureWorker();
+      const requestId = state.nextRequestId + 1;
+      state.nextRequestId = requestId;
+      return new Promise<GeneratedMapsPayload>((resolve, reject) => {
+        state.pending.set(requestId, {
+          generationId,
+          resolve,
+          reject,
+        });
+        const request: MaterialGenerationWorkerRequest = {
+          type: "generate",
+          requestId,
+          maxEdge: edge,
+          settings: project.mapSettings,
+          channels,
+        };
+        try {
+          state.worker.postMessage(request);
+        } catch (reason) {
+          state.pending.delete(requestId);
+          reject(reason);
+        }
+      });
+    };
+
+    const generateOnMainThread = async (
+      edge: number,
+      channels: (typeof textureMapChannels)[number][],
+    ): Promise<GeneratedMapsPayload> => {
+      const prepared = await getPrepared(edge);
+      const full = channels.length === textureMapChannels.length;
+      return {
+        result: full
+          ? generatePreparedMaps(prepared, project.mapSettings)
+          : Object.assign(
+              {},
+              ...channels.map((channel) =>
+                generateDerivedMap(prepared, project.mapSettings, channel),
+              ),
+            ),
+        width: prepared.width,
+        height: prepared.height,
+        full,
+      };
+    };
+
+    const generateAtResolution = async (
+      edge: number,
+      channels: (typeof textureMapChannels)[number][],
+    ) => {
+      const canUseWorker =
+        !workerDisabledRef.current &&
+        typeof Worker !== "undefined" &&
+        typeof OffscreenCanvas !== "undefined" &&
+        typeof createImageBitmap !== "undefined";
+      if (canUseWorker) {
+        try {
+          return await generateInWorker(edge, channels);
+        } catch (reason) {
+          if (!isCurrent()) throw reason;
+          workerDisabledRef.current = true;
+          terminateWorker(new Error("Falling back to browser map generation."));
+        }
+      }
+      return generateOnMainThread(edge, channels);
+    };
+
     const completed = completedRef.current;
     const hasCompletedFullResolution =
-      completed?.source === source &&
-      completed.maxEdge === maxEdge;
+      completed?.source === source && completed.maxEdge === maxEdge;
     const changedChannels = hasCompletedFullResolution
       ? textureMapChannels.filter((channel) =>
           channelPixelsChanged(
@@ -125,38 +311,36 @@ export function useMaterialEvaluation(
 
     const generateFullResolution = async () => {
       try {
-        const prepared = await getPrepared(maxEdge);
-        if (!isCurrent()) return;
-
         const latestCompleted = completedRef.current;
         const generateAll =
           latestCompleted?.source !== source ||
           latestCompleted.maxEdge !== maxEdge;
-        let nextEvaluation: MaterialEvaluation;
+        const fullResolutionChanges = generateAll
+          ? textureMapChannels
+          : textureMapChannels.filter((channel) =>
+              channelPixelsChanged(
+                latestCompleted.settings,
+                project.mapSettings,
+                channel,
+              ),
+            );
+        const payload = await generateAtResolution(
+          maxEdge,
+          fullResolutionChanges,
+        );
+        if (!isCurrent()) return;
 
-        if (generateAll) {
-          nextEvaluation = generatePreparedMaps(prepared, project.mapSettings);
-        } else {
-          const fullResolutionChanges = textureMapChannels.filter((channel) =>
-            channelPixelsChanged(
-              latestCompleted.settings,
-              project.mapSettings,
-              channel,
-            ),
-          );
-          const updates = Object.assign(
-            {},
-            ...fullResolutionChanges.map((channel) =>
-              generateDerivedMap(prepared, project.mapSettings, channel),
-            ),
-          );
+        let nextEvaluation: MaterialEvaluation;
+        if (payload.full) {
+          nextEvaluation = payload.result as MaterialEvaluation;
+        } else if (latestCompleted) {
           nextEvaluation = {
             ...latestCompleted.evaluation,
-            ...updates,
+            ...payload.result,
           };
+        } else {
+          throw new Error("The full-resolution map cache is unavailable.");
         }
-
-        if (!isCurrent()) return;
         completedRef.current = {
           source,
           maxEdge,
@@ -178,14 +362,11 @@ export function useMaterialEvaluation(
     frame = window.requestAnimationFrame(() => {
       setGenerating(true);
       const interactiveEdge = Math.min(INTERACTIVE_PREVIEW_EDGE, maxEdge);
-      void getPrepared(interactiveEdge)
-        .then((prepared) => {
+      void generateAtResolution(interactiveEdge, textureMapChannels)
+        .then((payload) => {
           if (!isCurrent()) return;
-          const interactiveEvaluation = generatePreparedMaps(
-            prepared,
-            project.mapSettings,
-          );
-          if (!isCurrent()) return;
+          const interactiveEvaluation =
+            payload.result as MaterialEvaluation;
           setEvaluation(interactiveEvaluation);
           setError(null);
 
@@ -217,6 +398,7 @@ export function useMaterialEvaluation(
       active = false;
       window.cancelAnimationFrame(frame);
       window.clearTimeout(fullResolutionTimer);
+      cancelWorkerGeneration();
     };
   }, [graphEvaluation, maxEdge, project.mapSettings, project.sourceTexture]);
 
