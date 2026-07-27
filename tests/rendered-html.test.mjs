@@ -165,6 +165,12 @@ test("keeps persistence local and creates only the PBR output node", async () =>
   assert.match(preview, /SEAMLESS TRI-PLANAR/);
   assert.match(preview, /MeshBuilder\.CreateSphere/);
   assert.doesNotMatch(preview, /createPoleFreeSphere/);
+  assert.match(preview, /pixelBuffersEqual/);
+  assert.match(preview, /uploadTexturePixels/);
+  assert.match(preview, /currentGpuState\?\.structureKey === materialStructureKey/);
+  assert.match(preview, /updateTexture\(\s*currentGpuState\.albedo/);
+  assert.match(preview, /updateTexture\(\s*currentGpuState\.normal/);
+  assert.match(preview, /updateTexture\(\s*currentGpuState\.orm/);
   assert.match(studio, /createGraphNodeThumbnails/);
   assert.match(studio, /evaluateNodeMap/);
   assert.match(node, /has-thumbnail/);

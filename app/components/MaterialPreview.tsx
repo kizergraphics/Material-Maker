@@ -84,6 +84,25 @@ type TriPlanarTextures = {
   orm?: BaseTexture;
 };
 
+type UploadedTexture = {
+  texture: DynamicTexture;
+  pixels: Uint8ClampedArray;
+};
+
+type OrmSources = {
+  ambientOcclusion: Uint8ClampedArray;
+  roughness: Uint8ClampedArray;
+  metallic: Uint8ClampedArray;
+};
+
+type PreviewGpuState = {
+  structureKey: string;
+  albedo?: UploadedTexture;
+  normal?: UploadedTexture;
+  orm?: UploadedTexture;
+  ormSources?: OrmSources;
+};
+
 class TriPlanarPBRPlugin extends MaterialPluginBase {
   private readonly textures: TriPlanarTextures;
 
@@ -263,13 +282,39 @@ function createPreviewMesh(scene: Scene, shape: PreviewShape) {
   );
 }
 
+function pixelBuffersEqual(
+  previous: Uint8ClampedArray,
+  next: Uint8ClampedArray,
+) {
+  if (previous === next) return true;
+  if (previous.length !== next.length) return false;
+  for (let index = 0; index < next.length; index += 1) {
+    if (previous[index] !== next[index]) return false;
+  }
+  return true;
+}
+
+function uploadTexturePixels(
+  texture: DynamicTexture,
+  pixels: Uint8ClampedArray,
+  width: number,
+  height: number,
+) {
+  texture.getContext().putImageData(
+    new ImageData(new Uint8ClampedArray(pixels), width, height),
+    0,
+    0,
+  );
+  texture.update(false);
+}
+
 function createTexture(
   scene: Scene,
   name: string,
   pixels: Uint8ClampedArray,
   width: number,
   height: number,
-) {
+): UploadedTexture {
   const texture = new DynamicTexture(
     name,
     { width, height },
@@ -277,16 +322,61 @@ function createTexture(
     false,
     Texture.TRILINEAR_SAMPLINGMODE,
   );
-  const context = texture.getContext();
-  context.putImageData(
-    new ImageData(new Uint8ClampedArray(pixels), width, height),
-    0,
-    0,
-  );
   texture.wrapU = Texture.WRAP_ADDRESSMODE;
   texture.wrapV = Texture.WRAP_ADDRESSMODE;
-  texture.update(false);
-  return texture;
+  uploadTexturePixels(texture, pixels, width, height);
+  return { texture, pixels };
+}
+
+function updateTexture(
+  uploaded: UploadedTexture | undefined,
+  pixels: Uint8ClampedArray,
+  width: number,
+  height: number,
+) {
+  if (!uploaded) return;
+  if (!pixelBuffersEqual(uploaded.pixels, pixels)) {
+    uploadTexturePixels(uploaded.texture, pixels, width, height);
+  }
+  uploaded.pixels = pixels;
+}
+
+function packOrmTexture(
+  sources: OrmSources,
+  width: number,
+  height: number,
+  enabled: {
+    ambientOcclusion: boolean;
+    roughness: boolean;
+    metallic: boolean;
+  },
+) {
+  const packed = new Uint8ClampedArray(width * height * 4);
+  for (let offset = 0; offset < packed.length; offset += 4) {
+    packed[offset] = enabled.ambientOcclusion
+      ? sources.ambientOcclusion[offset]
+      : 255;
+    packed[offset + 1] = enabled.roughness
+      ? sources.roughness[offset]
+      : 153;
+    packed[offset + 2] = enabled.metallic
+      ? sources.metallic[offset]
+      : 0;
+    packed[offset + 3] = 255;
+  }
+  return packed;
+}
+
+function ormSourcesEqual(
+  previous: OrmSources | undefined,
+  next: OrmSources,
+) {
+  return Boolean(
+    previous &&
+    pixelBuffersEqual(previous.ambientOcclusion, next.ambientOcclusion) &&
+    pixelBuffersEqual(previous.roughness, next.roughness) &&
+    pixelBuffersEqual(previous.metallic, next.metallic),
+  );
 }
 
 export function MaterialPreview({
@@ -305,6 +395,7 @@ export function MaterialPreview({
   const groundRef = useRef<Mesh | null>(null);
   const shadowRef = useRef<ShadowGenerator | null>(null);
   const materialRef = useRef<PBRMaterial | StandardMaterial | null>(null);
+  const gpuStateRef = useRef<PreviewGpuState | null>(null);
   const autoRotateRef = useRef(autoRotate);
   const isPointerInteractingRef = useRef(false);
   const [fps, setFps] = useState(60);
@@ -451,6 +542,8 @@ export function MaterialPreview({
       sceneRef.current = null;
       engineRef.current = null;
       shadowRef.current = null;
+      materialRef.current = null;
+      gpuStateRef.current = null;
     };
   }, []);
 
@@ -490,11 +583,89 @@ export function MaterialPreview({
     channel === "material" && mapSettings.metallic.enabled;
   const materialAoEnabled =
     channel === "material" && mapSettings.ao.enabled;
+  const materialStructureKey = [
+    channel,
+    evaluation.width,
+    evaluation.height,
+    materialBaseColorEnabled,
+    materialNormalEnabled,
+    materialRoughnessEnabled,
+    materialMetallicEnabled,
+    materialAoEnabled,
+  ].join(":");
 
   useEffect(() => {
     const scene = sceneRef.current;
     if (!scene) return;
+    const currentGpuState = gpuStateRef.current;
+
+    if (currentGpuState?.structureKey === materialStructureKey) {
+      if (channel === "material") {
+        if (materialBaseColorEnabled) {
+          updateTexture(
+            currentGpuState.albedo,
+            evaluation.albedo,
+            evaluation.width,
+            evaluation.height,
+          );
+        }
+        if (materialNormalEnabled) {
+          updateTexture(
+            currentGpuState.normal,
+            evaluation.normal,
+            evaluation.width,
+            evaluation.height,
+          );
+        }
+        const ormSources = {
+          ambientOcclusion: evaluation.ambientOcclusion,
+          roughness: evaluation.roughness,
+          metallic: evaluation.metallic,
+        };
+        if (!ormSourcesEqual(currentGpuState.ormSources, ormSources)) {
+          updateTexture(
+            currentGpuState.orm,
+            packOrmTexture(
+              ormSources,
+              evaluation.width,
+              evaluation.height,
+              {
+                ambientOcclusion: materialAoEnabled,
+                roughness: materialRoughnessEnabled,
+                metallic: materialMetallicEnabled,
+              },
+            ),
+            evaluation.width,
+            evaluation.height,
+          );
+        }
+        currentGpuState.ormSources = ormSources;
+      } else {
+        const pixels = channel === "baseColor"
+          ? evaluation.albedo
+          : channel === "height"
+            ? evaluation.heightMap
+            : channel === "normal"
+              ? evaluation.normal
+              : channel === "roughness"
+                ? evaluation.roughness
+                : channel === "metallic"
+                  ? evaluation.metallic
+                  : evaluation.ambientOcclusion;
+        updateTexture(
+          currentGpuState.albedo,
+          pixels,
+          evaluation.width,
+          evaluation.height,
+        );
+      }
+      return;
+    }
+
     materialRef.current?.dispose(true, true);
+    const nextGpuState: PreviewGpuState = {
+      structureKey: materialStructureKey,
+    };
 
     let material: PBRMaterial;
     if (channel === "normal") {
@@ -508,7 +679,8 @@ export function MaterialPreview({
       const diagnostic = new PBRMaterial("normal-diagnostic", scene);
       diagnostic.unlit = true;
       diagnostic.albedoColor = Color3.White();
-      new TriPlanarPBRPlugin(diagnostic, { albedo: normal });
+      nextGpuState.albedo = normal;
+      new TriPlanarPBRPlugin(diagnostic, { albedo: normal.texture });
       material = diagnostic;
     } else if (
       channel === "height" ||
@@ -533,47 +705,64 @@ export function MaterialPreview({
       const diagnostic = new PBRMaterial(`${channel}-diagnostic`, scene);
       diagnostic.unlit = true;
       diagnostic.albedoColor = Color3.White();
-      new TriPlanarPBRPlugin(diagnostic, { albedo: diagnosticTexture });
+      nextGpuState.albedo = diagnosticTexture;
+      new TriPlanarPBRPlugin(diagnostic, {
+        albedo: diagnosticTexture.texture,
+      });
       material = diagnostic;
     } else {
       const pbr = new PBRMaterial("generated-pbr", scene);
       const triPlanarTextures: TriPlanarTextures = {};
       if (channel !== "material" || materialBaseColorEnabled) {
-        triPlanarTextures.albedo = createTexture(
+        const albedo = createTexture(
           scene,
           "generated-albedo",
           previewAlbedo!,
           evaluation.width,
           evaluation.height,
         );
+        nextGpuState.albedo = albedo;
+        triPlanarTextures.albedo = albedo.texture;
       } else {
         pbr.albedoColor = new Color3(0.5, 0.5, 0.5);
       }
       if (channel === "material") {
-        const packed = new Uint8ClampedArray(evaluation.width * evaluation.height * 4);
-        for (let offset = 0; offset < packed.length; offset += 4) {
-          packed[offset] = materialAoEnabled ? previewAo![offset] : 255;
-          packed[offset + 1] = materialRoughnessEnabled ? previewRoughness![offset] : 153;
-          packed[offset + 2] = materialMetallicEnabled ? previewMetallic![offset] : 0;
-          packed[offset + 3] = 255;
-        }
-        triPlanarTextures.orm = createTexture(
+        const ormSources = {
+          ambientOcclusion: previewAo!,
+          roughness: previewRoughness!,
+          metallic: previewMetallic!,
+        };
+        const orm = createTexture(
           scene,
           "generated-orm",
-          packed,
+          packOrmTexture(
+            ormSources,
+            evaluation.width,
+            evaluation.height,
+            {
+              ambientOcclusion: materialAoEnabled,
+              roughness: materialRoughnessEnabled,
+              metallic: materialMetallicEnabled,
+            },
+          ),
           evaluation.width,
           evaluation.height,
         );
+        nextGpuState.orm = orm;
+        nextGpuState.ormSources = ormSources;
+        triPlanarTextures.orm = orm.texture;
         pbr.metallic = 1;
         pbr.roughness = 1;
         if (materialNormalEnabled) {
-          triPlanarTextures.normal = createTexture(
+          const normal = createTexture(
             scene,
             "generated-normal",
             previewNormal!,
             evaluation.width,
             evaluation.height,
           );
+          nextGpuState.normal = normal;
+          triPlanarTextures.normal = normal.texture;
         }
       } else {
         pbr.metallic = 0;
@@ -593,16 +782,24 @@ export function MaterialPreview({
     }
 
     materialRef.current = material;
+    gpuStateRef.current = nextGpuState;
     if (meshRef.current) meshRef.current.material = material;
   }, [
     channel,
+    evaluation.albedo,
+    evaluation.ambientOcclusion,
     evaluation.height,
+    evaluation.heightMap,
+    evaluation.metallic,
+    evaluation.normal,
+    evaluation.roughness,
     evaluation.width,
     materialAoEnabled,
     materialBaseColorEnabled,
     materialMetallicEnabled,
     materialNormalEnabled,
     materialRoughnessEnabled,
+    materialStructureKey,
     previewAlbedo,
     previewAo,
     previewHeight,
