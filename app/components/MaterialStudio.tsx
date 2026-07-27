@@ -57,20 +57,17 @@ import {
   createMaterialPack,
   deleteProjectLocal,
   downloadBlob,
+  getCachedProjectMapBlobs,
   importMaterialPack,
   loadProjectsLocal,
   saveProjectLocal,
 } from "../core/material-persistence";
 import { useMaterialStore } from "../core/material-store";
 import {
-  canvasToBlob,
-  evaluateMaterial,
   evaluateNodeMap,
-  pixelsToCanvas,
   type MaterialEvaluation,
 } from "../core/material-evaluator";
 import {
-  evaluateSourceTexture,
   importSourceTexture,
   pixelsForChannel,
 } from "../core/texture-generator";
@@ -89,6 +86,7 @@ import {
   DeferredMaterialPreview,
   DeferredTextureMapInspector,
   DeferredTextureMapWorkbench,
+  prewarmDeferredMaterialTools,
 } from "./DeferredMaterialTools";
 import { MaterialNode } from "./MaterialNode";
 
@@ -674,6 +672,42 @@ function StudioWorkspace() {
   }, [setHydrated]);
 
   useEffect(() => {
+    if (!hydrated) return;
+    const connection = (
+      navigator as Navigator & {
+        connection?: { saveData?: boolean; effectiveType?: string };
+      }
+    ).connection;
+    if (
+      connection?.saveData ||
+      connection?.effectiveType === "slow-2g" ||
+      connection?.effectiveType === "2g"
+    ) {
+      return;
+    }
+
+    let timeout = 0;
+    let idleCallback = 0;
+    const prewarm = () => {
+      void prewarmDeferredMaterialTools();
+    };
+    const requestIdleCallback = (
+      window as Partial<Window>
+    ).requestIdleCallback;
+    if (requestIdleCallback) {
+      idleCallback = requestIdleCallback.call(window, prewarm, {
+        timeout: 4000,
+      });
+    } else {
+      timeout = window.setTimeout(prewarm, 1500);
+    }
+    return () => {
+      if (idleCallback) window.cancelIdleCallback(idleCallback);
+      window.clearTimeout(timeout);
+    };
+  }, [hydrated]);
+
+  useEffect(() => {
     if (sourceTexture) setWorkspaceView("maps");
     else setWorkspaceView("graph");
   }, [sourceTexture]);
@@ -755,22 +789,12 @@ function StudioWorkspace() {
     setDownloadingMaps(true);
     try {
       const project = state.toProject();
-      const fullResolutionEvaluation = project.sourceTexture
-        ? await evaluateSourceTexture(
-            project.sourceTexture,
-            project.mapSettings,
-            project.exportResolution,
-          )
-        : evaluateMaterial(project, project.exportResolution);
+      const { blobs } = await getCachedProjectMapBlobs(
+        project,
+        enabledChannels,
+      );
       const prefix = safeDownloadName(project.name);
-      for (const channel of enabledChannels) {
-        const blob = await canvasToBlob(
-          pixelsToCanvas(
-            pixelsForChannel(fullResolutionEvaluation, channel),
-            fullResolutionEvaluation.width,
-            fullResolutionEvaluation.height,
-          ),
-        );
+      for (const { channel, blob } of blobs) {
         downloadBlob(blob, `${prefix}-${mapDownloadNames[channel]}.png`);
       }
       setNotice(

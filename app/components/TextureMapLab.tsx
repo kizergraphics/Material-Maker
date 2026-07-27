@@ -11,12 +11,11 @@ import {
   WandSparkles,
 } from "lucide-react";
 import { useEffect, useRef, type DragEvent } from "react";
+import { type MaterialEvaluation } from "../core/material-evaluator";
 import {
-  canvasToBlob,
-  pixelsToCanvas,
-  type MaterialEvaluation,
-} from "../core/material-evaluator";
-import { downloadBlob } from "../core/material-persistence";
+  downloadBlob,
+  getCachedMapBlob,
+} from "../core/material-persistence";
 import type {
   ExportResolution,
   MapGenerationSettings,
@@ -247,13 +246,11 @@ export function TextureMapInspector({
 }) {
   const downloadCurrent = async () => {
     if (channel === "material" || isGenerating) return;
-    const canvas = pixelsToCanvas(
-      pixelsForChannel(evaluation, channel),
-      evaluation.width,
-      evaluation.height,
-    );
     const safeName = projectName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "material";
-    downloadBlob(await canvasToBlob(canvas), `${safeName}-${channel}.png`);
+    downloadBlob(
+      await getCachedMapBlob(evaluation, channel),
+      `${safeName}-${channel}.png`,
+    );
   };
 
   const update = (map: keyof MapGenerationSettings, key: string, value: number | boolean) => {

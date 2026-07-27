@@ -40,7 +40,8 @@ type GenerationWorkerState = {
 };
 
 const INTERACTIVE_PREVIEW_EDGE = 128;
-const FULL_PREVIEW_DELAY_MS = 160;
+const INTERACTIVE_PREVIEW_DELAY_MS = 40;
+const FULL_PREVIEW_DELAY_MS = 240;
 
 function channelPixelsChanged(
   previous: MaterialProject["mapSettings"],
@@ -80,6 +81,7 @@ export function useMaterialEvaluation(
     promises: Map<number, Promise<PreparedSourceTexture>>;
   } | null>(null);
   const completedRef = useRef<SourceGeneration | null>(null);
+  const interactiveRef = useRef<SourceGeneration | null>(null);
   const generationIdRef = useRef(0);
   const workerRef = useRef<GenerationWorkerState | null>(null);
   const workerDisabledRef = useRef(false);
@@ -103,6 +105,7 @@ export function useMaterialEvaluation(
     generationIdRef.current = generationId;
     let active = true;
     let frame = 0;
+    let interactiveTimer = 0;
     let fullResolutionTimer = 0;
     const isCurrent = () =>
       active && generationIdRef.current === generationId;
@@ -133,6 +136,7 @@ export function useMaterialEvaluation(
     if (!project.sourceTexture) {
       preparedRef.current = null;
       completedRef.current = null;
+      interactiveRef.current = null;
       workerDisabledRef.current = false;
       terminateWorker(new Error("The source texture was removed."));
       return () => {
@@ -361,42 +365,74 @@ export function useMaterialEvaluation(
 
     frame = window.requestAnimationFrame(() => {
       setGenerating(true);
-      const interactiveEdge = Math.min(INTERACTIVE_PREVIEW_EDGE, maxEdge);
-      void generateAtResolution(interactiveEdge, textureMapChannels)
-        .then((payload) => {
-          if (!isCurrent()) return;
-          const interactiveEvaluation =
-            payload.result as MaterialEvaluation;
-          setEvaluation(interactiveEvaluation);
-          setError(null);
+      interactiveTimer = window.setTimeout(() => {
+        const interactiveEdge = Math.min(INTERACTIVE_PREVIEW_EDGE, maxEdge);
+        const latestInteractive = interactiveRef.current;
+        const canReuseInteractive =
+          latestInteractive?.source === source &&
+          latestInteractive.maxEdge === interactiveEdge;
+        const interactiveChanges = canReuseInteractive
+          ? textureMapChannels.filter((channel) =>
+              channelPixelsChanged(
+                latestInteractive.settings,
+                project.mapSettings,
+                channel,
+              ),
+            )
+          : textureMapChannels;
 
-          if (interactiveEdge === maxEdge) {
-            completedRef.current = {
+        void generateAtResolution(interactiveEdge, interactiveChanges)
+          .then((payload) => {
+            if (!isCurrent()) return;
+            let interactiveEvaluation: MaterialEvaluation;
+            if (payload.full) {
+              interactiveEvaluation = payload.result as MaterialEvaluation;
+            } else if (canReuseInteractive && latestInteractive) {
+              interactiveEvaluation = {
+                ...latestInteractive.evaluation,
+                ...payload.result,
+              };
+            } else {
+              throw new Error("The interactive map cache is unavailable.");
+            }
+            interactiveRef.current = {
               source,
-              maxEdge,
+              maxEdge: interactiveEdge,
               settings: project.mapSettings,
               evaluation: interactiveEvaluation,
             };
-            setGenerating(false);
-            return;
-          }
+            setEvaluation(interactiveEvaluation);
+            setError(null);
 
-          fullResolutionTimer = window.setTimeout(() => {
-            void generateFullResolution();
-          }, FULL_PREVIEW_DELAY_MS);
-        })
-        .catch((reason) => {
-          if (!isCurrent()) return;
-          setError(
-            reason instanceof Error ? reason.message : "Map generation failed.",
-          );
-          setGenerating(false);
-        });
+            if (interactiveEdge === maxEdge) {
+              completedRef.current = {
+                source,
+                maxEdge,
+                settings: project.mapSettings,
+                evaluation: interactiveEvaluation,
+              };
+              setGenerating(false);
+              return;
+            }
+
+            fullResolutionTimer = window.setTimeout(() => {
+              void generateFullResolution();
+            }, FULL_PREVIEW_DELAY_MS);
+          })
+          .catch((reason) => {
+            if (!isCurrent()) return;
+            setError(
+              reason instanceof Error ? reason.message : "Map generation failed.",
+            );
+            setGenerating(false);
+          });
+      }, INTERACTIVE_PREVIEW_DELAY_MS);
     });
 
     return () => {
       active = false;
       window.cancelAnimationFrame(frame);
+      window.clearTimeout(interactiveTimer);
       window.clearTimeout(fullResolutionTimer);
       cancelWorkerGeneration();
     };

@@ -46,12 +46,22 @@ internal static class Program
         AppDomain.CurrentDomain.ProcessExit += (_, _) => Cleanup();
 
         using var startupForm = new StartupForm();
-        startupForm.FormClosed += (_, _) => Cleanup();
+        using var startupCancellation = new CancellationTokenSource();
+        startupForm.FormClosing += (_, _) =>
+        {
+            startupCancellation.Cancel();
+            Cleanup();
+        };
         startupForm.Shown += async (_, _) =>
         {
             try
             {
-                await RunAsync(args, startupForm);
+                await RunAsync(args, startupForm, startupCancellation.Token);
+            }
+            catch (OperationCanceledException)
+                when (startupCancellation.IsCancellationRequested)
+            {
+                Log("Startup canceled.");
             }
             catch (Exception exception)
             {
@@ -71,14 +81,20 @@ internal static class Program
             finally
             {
                 Cleanup();
-                startupForm.Close();
+                if (!startupForm.IsDisposed)
+                {
+                    startupForm.Close();
+                }
             }
         };
 
         Application.Run(startupForm);
     }
 
-    private static async Task RunAsync(string[] args, StartupForm startupForm)
+    private static async Task RunAsync(
+        string[] args,
+        StartupForm startupForm,
+        CancellationToken cancellationToken)
     {
         var projectRoot = FindProjectRoot(AppContext.BaseDirectory);
         var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
@@ -99,18 +115,34 @@ internal static class Program
         Log("Project root: " + projectRoot);
 
         startupForm.SetStatus("Checking project dependencies…");
+        cancellationToken.ThrowIfCancellationRequested();
         var npmPath = FindNpm();
+        EnsureCommandDirectoryOnPath(npmPath);
         serverJob = CreateKillOnCloseJob();
 
-        await EnsureDependenciesAsync(projectRoot, stateDirectory, npmPath);
-        await EnsureProductionBuildAsync(projectRoot, stateDirectory, npmPath, startupForm);
+        await EnsureDependenciesAsync(
+            projectRoot,
+            stateDirectory,
+            npmPath,
+            startupForm,
+            cancellationToken);
+        await EnsureProductionBuildAsync(
+            projectRoot,
+            stateDirectory,
+            npmPath,
+            startupForm,
+            cancellationToken);
 
         startupForm.SetStatus("Starting the local Material Maker service…");
+        cancellationToken.ThrowIfCancellationRequested();
         var port = ResolveAppPort(stateDirectory);
         EnsurePortAvailable(port);
         var url = "http://localhost:" + port;
         StartServer(projectRoot, npmPath, port);
-        await WaitForServerAsync(url, TimeSpan.FromSeconds(90));
+        await WaitForServerAsync(
+            url,
+            TimeSpan.FromSeconds(90),
+            cancellationToken);
         Log("Local production server is ready at " + url);
 
         if (args.Any(argument => argument.Equals("--smoke-test", StringComparison.OrdinalIgnoreCase)))
@@ -127,7 +159,9 @@ internal static class Program
         Log("Browser started: " + browserPath);
         startupForm.Hide();
 
-        await WaitForBrowserWindowToCloseAsync(browserJob);
+        await WaitForBrowserWindowToCloseAsync(
+            browserJob,
+            cancellationToken);
         Log("Browser window closed; shutting down local services.");
     }
 
@@ -182,35 +216,74 @@ internal static class Program
             "Node.js was not found. Install Node.js 22 or newer, then launch Material Maker again.");
     }
 
+    private static void EnsureCommandDirectoryOnPath(string commandPath)
+    {
+        var commandDirectory = Path.GetDirectoryName(commandPath);
+        if (string.IsNullOrWhiteSpace(commandDirectory))
+        {
+            return;
+        }
+
+        var pathValue = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+        var pathEntries = pathValue.Split(
+            Path.PathSeparator,
+            StringSplitOptions.RemoveEmptyEntries);
+
+        if (pathEntries.Any(entry =>
+                string.Equals(
+                    entry.Trim().Trim('"').TrimEnd(Path.DirectorySeparatorChar),
+                    commandDirectory.TrimEnd(Path.DirectorySeparatorChar),
+                    StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        Environment.SetEnvironmentVariable(
+            "PATH",
+            commandDirectory + Path.PathSeparator + pathValue);
+    }
+
     private static async Task EnsureDependenciesAsync(
         string projectRoot,
         string stateDirectory,
-        string npmPath)
+        string npmPath,
+        StartupForm startupForm,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var lockfilePath = Path.Combine(projectRoot, "package-lock.json");
         var markerPath = Path.Combine(stateDirectory, "package-lock.sha256");
         var nodeModulesPath = Path.Combine(projectRoot, "node_modules");
         var lockfileHash = File.Exists(lockfilePath) ? ComputeSha256(lockfilePath) : "no-lockfile";
         var installedHash = File.Exists(markerPath) ? File.ReadAllText(markerPath).Trim() : string.Empty;
+        var dependenciesAreInstalled = DependenciesAreInstalled(nodeModulesPath);
 
-        if (Directory.Exists(nodeModulesPath) && string.IsNullOrEmpty(installedHash))
+        if (dependenciesAreInstalled && string.IsNullOrEmpty(installedHash))
         {
             File.WriteAllText(markerPath, lockfileHash);
             Log("Existing dependencies were adopted.");
             return;
         }
 
-        if (Directory.Exists(nodeModulesPath) && installedHash == lockfileHash)
+        if (dependenciesAreInstalled && installedHash == lockfileHash)
         {
             Log("Dependencies are current.");
             return;
         }
 
+        if (Directory.Exists(nodeModulesPath) && !dependenciesAreInstalled)
+        {
+            Log("The previous dependency installation was incomplete.");
+        }
+
         Log("Installing or refreshing project dependencies.");
+        startupForm.SetStatus(
+            "Installing project dependencies… This can take a few minutes.");
         var exitCode = await RunNpmCommandAsync(
             projectRoot,
             npmPath,
-            "ci --no-audit --no-fund");
+            "ci --no-audit --no-fund",
+            cancellationToken);
 
         if (exitCode != 0)
         {
@@ -220,6 +293,13 @@ internal static class Program
 
         File.WriteAllText(markerPath, lockfileHash);
         Log("Dependencies are ready.");
+    }
+
+    private static bool DependenciesAreInstalled(string nodeModulesPath)
+    {
+        var commandDirectory = Path.Combine(nodeModulesPath, ".bin");
+        return File.Exists(Path.Combine(commandDirectory, "cross-env.cmd")) &&
+               File.Exists(Path.Combine(commandDirectory, "vinext.cmd"));
     }
 
     private static string ComputeSha256(string filePath)
@@ -232,8 +312,10 @@ internal static class Program
         string projectRoot,
         string stateDirectory,
         string npmPath,
-        StartupForm startupForm)
+        StartupForm startupForm,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var serverEntryPath = Path.Combine(projectRoot, "dist", "server", "index.js");
         var clientOutputPath = Path.Combine(projectRoot, "dist", "client");
         var markerPath = Path.Combine(stateDirectory, ProductionBuildMarkerFileName);
@@ -262,7 +344,11 @@ internal static class Program
 
         startupForm.SetStatus("Updating Material Maker for the latest project files...");
         Log("Creating a fresh production build.");
-        var exitCode = await RunNpmCommandAsync(projectRoot, npmPath, "run build");
+        var exitCode = await RunNpmCommandAsync(
+            projectRoot,
+            npmPath,
+            "run build",
+            cancellationToken);
         if (exitCode != 0 || !File.Exists(serverEntryPath))
         {
             throw new InvalidOperationException(
@@ -333,8 +419,10 @@ internal static class Program
     private static async Task<int> RunNpmCommandAsync(
         string workingDirectory,
         string npmPath,
-        string arguments)
+        string arguments,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         using var process = CreateLoggedProcess(
             GetCommandProcessor(),
             BuildCommandArguments(npmPath, arguments),
@@ -344,7 +432,8 @@ internal static class Program
         AssignProcessToJobOrThrow(serverJob, process, "dependency installer");
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
-        await process.WaitForExitAsync();
+        await process.WaitForExitAsync(cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
         return process.ExitCode;
     }
 
@@ -477,7 +566,10 @@ internal static class Program
         }
     }
 
-    private static async Task WaitForServerAsync(string url, TimeSpan timeout)
+    private static async Task WaitForServerAsync(
+        string url,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
     {
         using var client = new HttpClient
         {
@@ -487,6 +579,7 @@ internal static class Program
         var deadline = DateTime.UtcNow + timeout;
         while (DateTime.UtcNow < deadline)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (serverProcess is { HasExited: true })
             {
                 throw new InvalidOperationException(
@@ -495,7 +588,9 @@ internal static class Program
 
             try
             {
-                using var response = await client.GetAsync(url);
+                using var response = await client.GetAsync(
+                    url,
+                    cancellationToken);
                 if ((int)response.StatusCode < 500)
                 {
                     return;
@@ -506,11 +601,12 @@ internal static class Program
                 // The server is still starting.
             }
             catch (TaskCanceledException)
+                when (!cancellationToken.IsCancellationRequested)
             {
                 // The server is still starting.
             }
 
-            await Task.Delay(300);
+            await Task.Delay(300, cancellationToken);
         }
 
         throw new TimeoutException(
@@ -589,7 +685,9 @@ internal static class Program
                throw new InvalidOperationException("The browser process could not be started.");
     }
 
-    private static async Task WaitForBrowserWindowToCloseAsync(IntPtr job)
+    private static async Task WaitForBrowserWindowToCloseAsync(
+        IntPtr job,
+        CancellationToken cancellationToken)
     {
         var sawWindow = false;
         var noWindowSince = DateTime.MinValue;
@@ -597,6 +695,7 @@ internal static class Program
 
         while (true)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var processIds = GetJobProcessIds(job);
             var hasWindow = HasVisibleTopLevelWindow(processIds);
 
@@ -621,7 +720,7 @@ internal static class Program
                 throw new TimeoutException("The browser window did not appear.");
             }
 
-            await Task.Delay(250);
+            await Task.Delay(250, cancellationToken);
         }
     }
 

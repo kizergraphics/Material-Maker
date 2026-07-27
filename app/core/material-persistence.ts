@@ -1,13 +1,22 @@
 import JSZip from "jszip";
 import { z } from "zod";
-import { canvasToBlob, evaluateMaterial, pixelsToCanvas } from "./material-evaluator";
+import {
+  canvasToBlob,
+  evaluateMaterial,
+  pixelsToCanvas,
+  type MaterialEvaluation,
+} from "./material-evaluator";
 import {
   DEFAULT_MAP_SETTINGS,
   PROJECT_SCHEMA_VERSION,
   type MaterialPackManifest,
   type MaterialProject,
 } from "./material-types";
-import { evaluateSourceTexture } from "./texture-generator";
+import {
+  evaluateSourceTexture,
+  pixelsForChannel,
+} from "./texture-generator";
+import type { TextureMapChannel } from "./material-types";
 
 const DB_NAME = "forge-material-studio";
 const DB_VERSION = 1;
@@ -258,18 +267,121 @@ const sanitizeName = (name: string) =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "") || "untitled-material";
 
-async function addTexture(
-  zip: JSZip,
-  path: string,
-  pixels: Uint8ClampedArray,
-  width: number,
-  height: number,
+const evaluationBlobCache = new WeakMap<
+  MaterialEvaluation,
+  Map<TextureMapChannel, Promise<Blob>>
+>();
+
+type ProjectEvaluationCache = {
+  project: MaterialProject;
+  evaluation: Promise<MaterialEvaluation>;
+};
+
+type MaterialPackCache = {
+  project: MaterialProject;
+  pack: Promise<{ blob: Blob; filename: string }>;
+};
+
+let projectEvaluationCache: ProjectEvaluationCache | null = null;
+let materialPackCache: MaterialPackCache | null = null;
+
+function sameEvaluationInputs(
+  cached: MaterialProject,
+  project: MaterialProject,
 ) {
-  const canvas = pixelsToCanvas(pixels, width, height);
-  zip.file(path, await canvasToBlob(canvas));
+  return (
+    cached.nodes === project.nodes &&
+    cached.edges === project.edges &&
+    cached.sourceTexture === project.sourceTexture &&
+    cached.mapSettings === project.mapSettings &&
+    cached.exportResolution === project.exportResolution
+  );
 }
 
-export async function createMaterialPack(project: MaterialProject) {
+function samePackInputs(
+  cached: MaterialProject,
+  project: MaterialProject,
+) {
+  return (
+    cached.id === project.id &&
+    cached.name === project.name &&
+    cached.createdAt === project.createdAt &&
+    cached.preview === project.preview &&
+    sameEvaluationInputs(cached, project)
+  );
+}
+
+function getProjectEvaluationCache(project: MaterialProject) {
+  if (
+    projectEvaluationCache &&
+    sameEvaluationInputs(projectEvaluationCache.project, project)
+  ) {
+    return projectEvaluationCache;
+  }
+
+  const evaluation = project.sourceTexture
+    ? evaluateSourceTexture(
+        project.sourceTexture,
+        project.mapSettings,
+        project.exportResolution,
+      )
+    : Promise.resolve(evaluateMaterial(project, project.exportResolution));
+  const cache = {
+    project,
+    evaluation: evaluation.catch((error) => {
+      if (projectEvaluationCache === cache) projectEvaluationCache = null;
+      throw error;
+    }),
+  };
+  projectEvaluationCache = cache;
+  return cache;
+}
+
+export function getCachedMapBlob(
+  evaluation: MaterialEvaluation,
+  channel: TextureMapChannel,
+) {
+  let channelCache = evaluationBlobCache.get(evaluation);
+  if (!channelCache) {
+    channelCache = new Map();
+    evaluationBlobCache.set(evaluation, channelCache);
+  }
+  const cached = channelCache.get(channel);
+  if (cached) return cached;
+
+  const blob = canvasToBlob(
+    pixelsToCanvas(
+      pixelsForChannel(evaluation, channel),
+      evaluation.width,
+      evaluation.height,
+    ),
+  ).catch((error) => {
+    channelCache.delete(channel);
+    throw error;
+  });
+  channelCache.set(channel, blob);
+  return blob;
+}
+
+export async function getCachedProjectMapBlobs(
+  project: MaterialProject,
+  channels: TextureMapChannel[],
+) {
+  const cache = getProjectEvaluationCache(project);
+  const evaluation = await cache.evaluation;
+  const blobs = await Promise.all(
+    channels.map(async (channel) => ({
+      channel,
+      blob: await getCachedMapBlob(evaluation, channel),
+    })),
+  );
+  return { evaluation, blobs };
+}
+
+async function buildMaterialPack(
+  project: MaterialProject,
+  evaluationCache: ProjectEvaluationCache,
+) {
   const safeProject: MaterialProject = {
     ...project,
     updatedAt: new Date().toISOString(),
@@ -287,22 +399,21 @@ export async function createMaterialPack(project: MaterialProject) {
   zip.file("manifest.json", JSON.stringify(manifest, null, 2));
   zip.file("material.json", JSON.stringify(safeProject, null, 2));
 
-  const resolution = safeProject.exportResolution;
-  const evaluation = safeProject.sourceTexture
-    ? await evaluateSourceTexture(safeProject.sourceTexture, safeProject.mapSettings, resolution)
-    : evaluateMaterial(safeProject, resolution);
+  const evaluation = await evaluationCache.evaluation;
   const textures = [
-    ["baseColor", "textures/base-color.png", evaluation.albedo],
-    ["height", "textures/height.png", evaluation.heightMap],
-    ["normal", "textures/normal.png", evaluation.normal],
-    ["roughness", "textures/roughness.png", evaluation.roughness],
-    ["metallic", "textures/metallic.png", evaluation.metallic],
-    ["ao", "textures/ambient-occlusion.png", evaluation.ambientOcclusion],
+    ["baseColor", "textures/base-color.png"],
+    ["height", "textures/height.png"],
+    ["normal", "textures/normal.png"],
+    ["roughness", "textures/roughness.png"],
+    ["metallic", "textures/metallic.png"],
+    ["ao", "textures/ambient-occlusion.png"],
   ] as const;
   await Promise.all(
     textures
       .filter(([channel]) => safeProject.mapSettings[channel].enabled)
-      .map(([, path, pixels]) => addTexture(zip, path, pixels, evaluation.width, evaluation.height)),
+      .map(async ([channel, path]) => {
+        zip.file(path, await getCachedMapBlob(evaluation, channel));
+      }),
   );
   if (safeProject.sourceTexture) {
     const extension = safeProject.sourceTexture.mimeType === "image/jpeg"
@@ -346,6 +457,28 @@ export async function createMaterialPack(project: MaterialProject) {
     blob,
     filename: `${sanitizeName(safeProject.name)}.mmpack`,
   };
+}
+
+export function createMaterialPack(project: MaterialProject) {
+  if (
+    materialPackCache &&
+    samePackInputs(materialPackCache.project, project)
+  ) {
+    return materialPackCache.pack;
+  }
+
+  const cache = {
+    project,
+    pack: buildMaterialPack(
+      project,
+      getProjectEvaluationCache(project),
+    ).catch((error) => {
+      if (materialPackCache === cache) materialPackCache = null;
+      throw error;
+    }),
+  };
+  materialPackCache = cache;
+  return cache.pack;
 }
 
 export function downloadBlob(blob: Blob, filename: string) {

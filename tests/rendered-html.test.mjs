@@ -183,10 +183,15 @@ test("keeps persistence local and creates only the PBR output node", async () =>
   assert.match(launcher, /http_localhost_\*\.indexeddb\.leveldb/);
   assert.doesNotMatch(launcher, /TcpListener\(IPAddress\.Loopback,\s*0\)/);
   assert.match(launcher, /EnsureProductionBuildAsync/);
+  assert.match(launcher, /CancellationToken/);
+  assert.match(launcher, /Installing project dependencies/);
   assert.match(launcher, /run start -- --hostname 127\.0\.0\.1 --port/);
   assert.doesNotMatch(launcher, /run dev -- --host 127\.0\.0\.1 --port/);
   assert.match(evaluationHook, /INTERACTIVE_PREVIEW_EDGE\s*=\s*128/);
-  assert.match(evaluationHook, /FULL_PREVIEW_DELAY_MS\s*=\s*160/);
+  assert.match(evaluationHook, /INTERACTIVE_PREVIEW_DELAY_MS\s*=\s*40/);
+  assert.match(evaluationHook, /FULL_PREVIEW_DELAY_MS\s*=\s*240/);
+  assert.match(evaluationHook, /interactiveRef/);
+  assert.match(evaluationHook, /clearTimeout\(interactiveTimer\)/);
   assert.match(evaluationHook, /generationIdRef/);
   assert.match(evaluationHook, /clearTimeout\(fullResolutionTimer\)/);
   assert.match(evaluationHook, /new Worker\(/);
@@ -199,6 +204,9 @@ test("keeps persistence local and creates only the PBR output node", async () =>
   assert.match(deferredTools, /lazy\(\(\)\s*=>/);
   assert.match(deferredTools, /import\("\.\/MaterialPreview"\)/);
   assert.match(deferredTools, /import\("\.\/TextureMapLab"\)/);
+  assert.match(deferredTools, /prewarmDeferredMaterialTools/);
+  assert.match(persistence, /evaluationBlobCache/);
+  assert.match(persistence, /getCachedProjectMapBlobs/);
   assert.match(hosting, /"d1": null/);
   assert.match(hosting, /"r2": null/);
   await assert.rejects(access(new URL("app/_sites-preview", projectRoot)));

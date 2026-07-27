@@ -7,13 +7,28 @@ import {
   type ReactNode,
 } from "react";
 
+const loadMaterialPreview = () => import("./MaterialPreview");
+const loadTextureMapLab = () => import("./TextureMapLab");
+
 const MaterialPreview = lazy(() =>
-  import("./MaterialPreview").then((module) => ({
+  loadMaterialPreview().then((module) => ({
     default: module.MaterialPreview,
   })),
 );
 
-const loadTextureMapLab = () => import("./TextureMapLab");
+let prewarmPromise: Promise<void> | null = null;
+
+export function prewarmDeferredMaterialTools() {
+  prewarmPromise ??= Promise.all([
+    loadMaterialPreview(),
+    loadTextureMapLab(),
+  ])
+    .then(() => undefined)
+    .catch(() => {
+      prewarmPromise = null;
+    });
+  return prewarmPromise;
+}
 
 const TextureMapCanvas = lazy(() =>
   loadTextureMapLab().then((module) => ({
