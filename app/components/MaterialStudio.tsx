@@ -68,6 +68,11 @@ import {
   type MaterialEvaluation,
 } from "../core/material-evaluator";
 import {
+  projectForGraphWorker,
+  type GraphEvaluationWorkerRequest,
+  type GraphEvaluationWorkerResponse,
+} from "../core/graph-evaluation-worker-types";
+import {
   importSourceTexture,
   pixelsForChannel,
 } from "../core/texture-generator";
@@ -116,6 +121,7 @@ const generatedMapChannels: TextureMapChannel[] = [
   "metallic",
   "ao",
 ];
+const GRAPH_THUMBNAIL_DELAY_MS = 50;
 
 const mapDownloadNames: Record<TextureMapChannel, string> = {
   baseColor: "base-color",
@@ -218,7 +224,12 @@ function graphNodeSignature(
   return signature;
 }
 
-function createGraphNodeThumbnails(
+type PendingGraphThumbnail = {
+  nodeId: string;
+  signature: string;
+};
+
+function planGraphNodeThumbnails(
   nodes: MaterialGraphNode[],
   edges: MaterialProject["edges"],
   evaluation: MaterialEvaluation,
@@ -231,7 +242,10 @@ function createGraphNodeThumbnails(
     if (!liveNodeIds.has(nodeId)) cache.delete(nodeId);
   }
 
-  return Object.fromEntries(nodes.map((node) => {
+  const thumbnails: Record<string, string> = {};
+  const pending: PendingGraphThumbnail[] = [];
+
+  for (const node of nodes) {
     const mapChannel = node.data.values.mapChannel;
     if (
       node.data.kind === "textureMap" &&
@@ -247,7 +261,8 @@ function createGraphNodeThumbnails(
         cached.width === evaluation.width &&
         cached.height === evaluation.height
       ) {
-        return [node.id, cached.thumbnail];
+        thumbnails[node.id] = cached.thumbnail;
+        continue;
       }
       const thumbnail = createThumbnail(
         pixels,
@@ -261,7 +276,8 @@ function createGraphNodeThumbnails(
         height: evaluation.height,
         thumbnail,
       });
-      return [node.id, thumbnail];
+      thumbnails[node.id] = thumbnail;
+      continue;
     }
 
     if (node.data.kind === "output") {
@@ -273,7 +289,8 @@ function createGraphNodeThumbnails(
         cached.width === evaluation.width &&
         cached.height === evaluation.height
       ) {
-        return [node.id, cached.thumbnail];
+        thumbnails[node.id] = cached.thumbnail;
+        continue;
       }
       const thumbnail = createThumbnail(
         evaluation.albedo,
@@ -287,7 +304,8 @@ function createGraphNodeThumbnails(
         height: evaluation.height,
         thumbnail,
       });
-      return [node.id, thumbnail];
+      thumbnails[node.id] = thumbnail;
+      continue;
     }
 
     const signature = graphNodeSignature(
@@ -298,21 +316,47 @@ function createGraphNodeThumbnails(
     );
     const cached = cache.get(node.id);
     if (cached?.signature === signature) {
-      return [node.id, cached.thumbnail];
+      thumbnails[node.id] = cached.thumbnail;
+      continue;
     }
-    const thumbnail = createThumbnail(
-      evaluateNodeMap({ nodes, edges }, node.id, 64),
-      64,
-      64,
-    );
-    cache.set(node.id, {
-      signature,
-      width: 64,
-      height: 64,
-      thumbnail,
-    });
-    return [node.id, thumbnail];
-  })) as Record<string, string>;
+    thumbnails[node.id] = cached?.thumbnail ?? "";
+    pending.push({ nodeId: node.id, signature });
+  }
+
+  return { thumbnails, pending };
+}
+
+function evaluateGraphNodeMapsInWorker(
+  worker: Worker,
+  nodes: MaterialGraphNode[],
+  edges: MaterialProject["edges"],
+  nodeIds: string[],
+) {
+  return new Promise<Record<string, Uint8ClampedArray>>((resolve, reject) => {
+    worker.onmessage = (
+      event: MessageEvent<GraphEvaluationWorkerResponse>,
+    ) => {
+      const response = event.data;
+      if (response.requestId !== 1) return;
+      if (response.type === "error") {
+        reject(new Error(response.message));
+        return;
+      }
+      if (response.type !== "node-maps-evaluated") return;
+      resolve(response.maps);
+    };
+    worker.onerror = () => {
+      reject(new Error("The graph thumbnail worker failed."));
+    };
+    const request: GraphEvaluationWorkerRequest = {
+      type: "evaluate-node-maps",
+      requestId: 1,
+      project: projectForGraphWorker(nodes, edges),
+      nodeIds,
+      size: 64,
+    };
+    worker.postMessage(request);
+  });
 }
 
 const nodeHelp = [
@@ -618,17 +662,75 @@ function StudioWorkspace() {
 
   useEffect(() => {
     if (workspaceView !== "graph") return;
+    let active = true;
+    let worker: Worker | null = null;
+    let timer = 0;
     const frame = window.requestAnimationFrame(() => {
-      setGraphNodeThumbnails(
-        createGraphNodeThumbnails(
-          nodes,
-          edges,
-          evaluation,
-          graphThumbnailCacheRef.current,
-        ),
+      const plan = planGraphNodeThumbnails(
+        nodes,
+        edges,
+        evaluation,
+        graphThumbnailCacheRef.current,
       );
+      if (!plan.pending.length) {
+        if (active) setGraphNodeThumbnails(plan.thumbnails);
+        return;
+      }
+
+      timer = window.setTimeout(() => {
+        const nodeIds = plan.pending.map(({ nodeId }) => nodeId);
+        const evaluateOnMainThread = () =>
+          Object.fromEntries(
+            nodeIds.map((nodeId) => [
+              nodeId,
+              evaluateNodeMap({ nodes, edges }, nodeId, 64),
+            ]),
+          );
+        let request: Promise<Record<string, Uint8ClampedArray>>;
+        if (typeof Worker === "undefined") {
+          request = Promise.resolve(evaluateOnMainThread());
+        } else {
+          worker = new Worker(
+            new URL("../workers/graph-evaluation.worker.ts", import.meta.url),
+            { type: "module", name: "forge-graph-thumbnails" },
+          );
+          request = evaluateGraphNodeMapsInWorker(
+            worker,
+            nodes,
+            edges,
+            nodeIds,
+          ).catch(() => evaluateOnMainThread());
+        }
+
+        void request
+          .then((maps) => {
+            if (!active) return;
+            for (const { nodeId, signature } of plan.pending) {
+              const pixels = maps[nodeId];
+              if (!pixels) continue;
+              const thumbnail = createThumbnail(pixels, 64, 64);
+              graphThumbnailCacheRef.current.set(nodeId, {
+                signature,
+                width: 64,
+                height: 64,
+                thumbnail,
+              });
+              plan.thumbnails[nodeId] = thumbnail;
+            }
+            setGraphNodeThumbnails(plan.thumbnails);
+          })
+          .finally(() => {
+            worker?.terminate();
+            worker = null;
+          });
+      }, GRAPH_THUMBNAIL_DELAY_MS);
     });
-    return () => window.cancelAnimationFrame(frame);
+    return () => {
+      active = false;
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+      worker?.terminate();
+    };
   }, [edges, evaluation, nodes, workspaceView]);
 
   const selectedNode = useMemo(

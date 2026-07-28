@@ -1,10 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   evaluateMaterial,
   type MaterialEvaluation,
 } from "./material-evaluator";
+import {
+  projectForGraphWorker,
+  type GraphEvaluationWorkerRequest,
+  type GraphEvaluationWorkerResponse,
+} from "./graph-evaluation-worker-types";
 import type {
   GeneratedMapsPayload,
   MaterialGenerationWorkerRequest,
@@ -42,6 +47,152 @@ type GenerationWorkerState = {
 const INTERACTIVE_PREVIEW_EDGE = 128;
 const INTERACTIVE_PREVIEW_DELAY_MS = 40;
 const FULL_PREVIEW_DELAY_MS = 240;
+const GRAPH_EVALUATION_DELAY_MS = 50;
+
+const emptyGraphEvaluation: MaterialEvaluation = {
+  width: 1,
+  height: 1,
+  albedo: new Uint8ClampedArray([128, 128, 128, 255]),
+  heightMap: new Uint8ClampedArray([128, 128, 128, 255]),
+  normal: new Uint8ClampedArray([128, 128, 255, 255]),
+  roughness: new Uint8ClampedArray([153, 153, 153, 255]),
+  metallic: new Uint8ClampedArray([0, 0, 0, 255]),
+  ambientOcclusion: new Uint8ClampedArray([255, 255, 255, 255]),
+  roughnessValue: 0.6,
+  metallicValue: 0,
+  warnings: ["Evaluating procedural graph."],
+};
+
+function useGraphMaterialEvaluation(
+  project: Pick<MaterialProject, "nodes" | "edges">,
+  size: number,
+  enabled: boolean,
+) {
+  const [evaluation, setEvaluation] =
+    useState<MaterialEvaluation>(emptyGraphEvaluation);
+  const [isGenerating, setGenerating] = useState(enabled);
+  const [error, setError] = useState<string | null>(null);
+  const workerRef = useRef<Worker | null>(null);
+  const generationIdRef = useRef(0);
+  const workerDisabledRef = useRef(false);
+
+  useEffect(
+    () => () => {
+      workerRef.current?.terminate();
+      workerRef.current = null;
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const generationId = generationIdRef.current + 1;
+    generationIdRef.current = generationId;
+    let active = true;
+    let frame = 0;
+    let timer = 0;
+    const isCurrent = () =>
+      active && generationIdRef.current === generationId;
+
+    const terminateWorker = () => {
+      workerRef.current?.terminate();
+      workerRef.current = null;
+    };
+
+    if (!enabled) {
+      terminateWorker();
+      return () => {
+        active = false;
+      };
+    }
+
+    const evaluateOnMainThread = () =>
+      evaluateMaterial(
+        { nodes: project.nodes, edges: project.edges },
+        size,
+      );
+
+    const evaluateInWorker = () => {
+      terminateWorker();
+      const worker = new Worker(
+        new URL("../workers/graph-evaluation.worker.ts", import.meta.url),
+        { type: "module", name: "forge-graph-evaluation" },
+      );
+      workerRef.current = worker;
+      return new Promise<MaterialEvaluation>((resolve, reject) => {
+        worker.onmessage = (
+          event: MessageEvent<GraphEvaluationWorkerResponse>,
+        ) => {
+          const response = event.data;
+          if (response.requestId !== generationId) return;
+          if (response.type === "error") {
+            reject(new Error(response.message));
+            return;
+          }
+          if (response.type !== "material-evaluated") return;
+          resolve(response.evaluation);
+        };
+        worker.onerror = () => {
+          reject(new Error("The graph evaluation worker failed."));
+        };
+        const request: GraphEvaluationWorkerRequest = {
+          type: "evaluate-material",
+          requestId: generationId,
+          project: projectForGraphWorker(project.nodes, project.edges),
+          size,
+        };
+        worker.postMessage(request);
+      }).finally(() => {
+        if (workerRef.current === worker) {
+          worker.terminate();
+          workerRef.current = null;
+        }
+      });
+    };
+
+    frame = window.requestAnimationFrame(() => {
+      if (!isCurrent()) return;
+      setGenerating(true);
+      timer = window.setTimeout(() => {
+        const canUseWorker =
+          !workerDisabledRef.current && typeof Worker !== "undefined";
+        const request = canUseWorker
+          ? evaluateInWorker().catch((reason) => {
+              if (!isCurrent()) throw reason;
+              workerDisabledRef.current = true;
+              return evaluateOnMainThread();
+            })
+          : Promise.resolve(evaluateOnMainThread());
+
+        void request
+          .then((nextEvaluation) => {
+            if (!isCurrent()) return;
+            setEvaluation(nextEvaluation);
+            setError(null);
+          })
+          .catch((reason) => {
+            if (!isCurrent()) return;
+            setError(
+              reason instanceof Error
+                ? reason.message
+                : "Graph evaluation failed.",
+            );
+          })
+          .finally(() => {
+            if (isCurrent()) setGenerating(false);
+          });
+      }, GRAPH_EVALUATION_DELAY_MS);
+    });
+
+    return () => {
+      active = false;
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+      terminateWorker();
+    };
+  }, [enabled, project.edges, project.nodes, size]);
+
+  return { evaluation, isGenerating: enabled && isGenerating, error };
+}
 
 function channelPixelsChanged(
   previous: MaterialProject["mapSettings"],
@@ -62,16 +213,13 @@ export function useMaterialEvaluation(
   >,
   maxEdge: number,
 ) {
-  const graphEvaluation = useMemo(
-    () =>
-      evaluateMaterial(
-        { nodes: project.nodes, edges: project.edges },
-        maxEdge,
-      ),
-    [maxEdge, project.edges, project.nodes],
+  const graphResult = useGraphMaterialEvaluation(
+    { nodes: project.nodes, edges: project.edges },
+    maxEdge,
+    !project.sourceTexture,
   );
   const [evaluation, setEvaluation] =
-    useState<MaterialEvaluation>(graphEvaluation);
+    useState<MaterialEvaluation>(emptyGraphEvaluation);
   const [isGenerating, setGenerating] = useState(
     Boolean(project.sourceTexture),
   );
@@ -436,9 +584,9 @@ export function useMaterialEvaluation(
       window.clearTimeout(fullResolutionTimer);
       cancelWorkerGeneration();
     };
-  }, [graphEvaluation, maxEdge, project.mapSettings, project.sourceTexture]);
+  }, [maxEdge, project.mapSettings, project.sourceTexture]);
 
   return project.sourceTexture
     ? { evaluation, isGenerating, error }
-    : { evaluation: graphEvaluation, isGenerating: false, error: null };
+    : graphResult;
 }

@@ -128,7 +128,7 @@ test("keeps Babylon and Map Lab out of the initial studio and viewer bundles", a
 });
 
 test("keeps persistence local and creates only the PBR output node", async () => {
-  const [persistence, studio, preview, node, types, store, launcher, hosting, evaluationHook, mapLab, generationWorker, deferredTools] = await Promise.all([
+  const [persistence, studio, preview, node, types, store, launcher, hosting, evaluationHook, mapLab, generationWorker, graphWorker, graphWorkerTypes, deferredTools] = await Promise.all([
     readFile(new URL("../app/core/material-persistence.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/components/MaterialStudio.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/MaterialPreview.tsx", import.meta.url), "utf8"),
@@ -140,6 +140,8 @@ test("keeps persistence local and creates only the PBR output node", async () =>
     readFile(new URL("../app/core/use-material-evaluation.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/components/TextureMapLab.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/workers/material-generation.worker.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/workers/graph-evaluation.worker.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/core/graph-evaluation-worker-types.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/components/DeferredMaterialTools.tsx", import.meta.url), "utf8"),
   ]);
   assert.match(persistence, /indexedDB\.open/);
@@ -171,7 +173,7 @@ test("keeps persistence local and creates only the PBR output node", async () =>
   assert.match(preview, /updateTexture\(\s*currentGpuState\.albedo/);
   assert.match(preview, /updateTexture\(\s*currentGpuState\.normal/);
   assert.match(preview, /updateTexture\(\s*currentGpuState\.orm/);
-  assert.match(studio, /createGraphNodeThumbnails/);
+  assert.match(studio, /planGraphNodeThumbnails/);
   assert.match(studio, /evaluateNodeMap/);
   assert.match(node, /has-thumbnail/);
   assert.match(node, /material-node__thumbnail/);
@@ -202,10 +204,18 @@ test("keeps persistence local and creates only the PBR output node", async () =>
   assert.match(evaluationHook, /clearTimeout\(fullResolutionTimer\)/);
   assert.match(evaluationHook, /new Worker\(/);
   assert.match(evaluationHook, /worker\.terminate\(\)/);
+  assert.match(evaluationHook, /graph-evaluation\.worker\.ts/);
+  assert.match(evaluationHook, /GRAPH_EVALUATION_DELAY_MS\s*=\s*50/);
+  assert.doesNotMatch(evaluationHook, /const graphEvaluation = useMemo/);
   assert.match(generationWorker, /OffscreenCanvas/);
   assert.match(generationWorker, /transferablesFor/);
+  assert.match(graphWorker, /evaluateMaterial/);
+  assert.match(graphWorker, /evaluateNodeMap/);
+  assert.match(graphWorker, /transferablesFor/);
+  assert.match(graphWorkerTypes, /projectForGraphWorker/);
   assert.match(studio, /graphThumbnailCacheRef/);
   assert.match(studio, /graphNodeSignature/);
+  assert.match(studio, /forge-graph-thumbnails/);
   assert.match(mapLab, /disabled=\{isGenerating\}/);
   assert.match(deferredTools, /lazy\(\(\)\s*=>/);
   assert.match(deferredTools, /import\("\.\/MaterialPreview"\)/);
