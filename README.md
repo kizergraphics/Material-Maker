@@ -8,7 +8,7 @@ Forge is a local-first procedural PBR material authoring prototype for game-prod
 - Local albedo import for PNG, JPEG, and WebP files with non-destructive generation of height, normal, roughness, metallic, and ambient-occlusion maps.
 - A six-map workbench with per-map controls, individual PNG downloads, source-aspect preservation, and 512/1024/2048 export sizes.
 - Live sphere, cube, and plane preview with beauty and individual-channel inspection.
-- IndexedDB autosave, project recovery, undo/redo, and keyboard save shortcuts.
+- IndexedDB autosave, project recovery, persistent generated-map caching, undo/redo, and keyboard save shortcuts.
 - Validated `.mmpack` import/export with baked PNG maps, source graph, manifest, and export report.
 - Standalone no-upload viewer with drag-and-drop package loading.
 - Responsive dark workstation interface and private social preview metadata.

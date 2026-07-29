@@ -15,6 +15,10 @@ import type {
   MaterialGenerationWorkerRequest,
   MaterialGenerationWorkerResponse,
 } from "./material-generation-worker-types";
+import {
+  getPersistentGeneratedMaps,
+  storePersistentGeneratedMaps,
+} from "./generated-map-cache";
 import type { MaterialProject } from "./material-types";
 import {
   generateDerivedMap,
@@ -504,6 +508,12 @@ export function useMaterialEvaluation(
           settings: project.mapSettings,
           evaluation: nextEvaluation,
         };
+        void storePersistentGeneratedMaps(
+          source,
+          project.mapSettings,
+          maxEdge,
+          nextEvaluation,
+        );
         setEvaluation(nextEvaluation);
         setError(null);
       } catch (reason) {
@@ -516,8 +526,7 @@ export function useMaterialEvaluation(
       }
     };
 
-    frame = window.requestAnimationFrame(() => {
-      setGenerating(true);
+    const scheduleGeneration = () => {
       interactiveTimer = window.setTimeout(() => {
         const interactiveEdge = Math.min(INTERACTIVE_PREVIEW_EDGE, maxEdge);
         const latestInteractive = interactiveRef.current;
@@ -564,6 +573,12 @@ export function useMaterialEvaluation(
                 settings: project.mapSettings,
                 evaluation: interactiveEvaluation,
               };
+              void storePersistentGeneratedMaps(
+                source,
+                project.mapSettings,
+                maxEdge,
+                interactiveEvaluation,
+              );
               setGenerating(false);
               return;
             }
@@ -580,6 +595,35 @@ export function useMaterialEvaluation(
             setGenerating(false);
           });
       }, INTERACTIVE_PREVIEW_DELAY_MS);
+    };
+
+    frame = window.requestAnimationFrame(() => {
+      if (!isCurrent()) return;
+      setGenerating(true);
+      void getPersistentGeneratedMaps(
+        source,
+        project.mapSettings,
+        maxEdge,
+      ).then((cachedEvaluation) => {
+        if (!isCurrent()) return;
+        if (!cachedEvaluation) {
+          scheduleGeneration();
+          return;
+        }
+        const cachedGeneration = {
+          source,
+          maxEdge,
+          settings: project.mapSettings,
+          evaluation: cachedEvaluation,
+        };
+        completedRef.current = cachedGeneration;
+        if (maxEdge <= INTERACTIVE_PREVIEW_EDGE) {
+          interactiveRef.current = cachedGeneration;
+        }
+        setEvaluation(cachedEvaluation);
+        setError(null);
+        setGenerating(false);
+      });
     });
 
     return () => {

@@ -7,6 +7,14 @@ import {
   type MaterialEvaluation,
 } from "./material-evaluator";
 import {
+  getPersistentGeneratedMaps,
+  storePersistentGeneratedMaps,
+} from "./generated-map-cache";
+import {
+  openMaterialDatabase,
+  PROJECT_STORE,
+} from "./local-database";
+import {
   DEFAULT_MAP_SETTINGS,
   PROJECT_SCHEMA_VERSION,
   type MaterialPackManifest,
@@ -18,9 +26,6 @@ import {
 } from "./texture-generator";
 import type { TextureMapChannel } from "./material-types";
 
-const DB_NAME = "forge-material-studio";
-const DB_VERSION = 1;
-const PROJECT_STORE = "projects";
 const MAX_SOURCE_BYTES = 48 * 1024 * 1024;
 const MAX_SOURCE_DATA_URL_LENGTH = Math.ceil((MAX_SOURCE_BYTES * 4) / 3) + 128;
 const MAX_SOURCE_PIXELS = 64 * 1024 * 1024;
@@ -122,6 +127,7 @@ const sourceTextureSchema = z.object({
   width: z.number().int().positive().max(16384),
   height: z.number().int().positive().max(16384),
   sizeBytes: z.number().int().nonnegative().max(MAX_SOURCE_BYTES),
+  fingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 }).superRefine((source, context) => {
   if (!isLocalImageDataUrl(source.dataUrl, source.mimeType)) {
     context.addIssue({
@@ -167,12 +173,23 @@ const projectSchema = z.object({
   exportResolution: z.union([z.literal(512), z.literal(1024), z.literal(2048)]).optional(),
 });
 
-function normalizeProject(value: z.infer<typeof projectSchema>): MaterialProject {
+function normalizeProject(
+  value: z.infer<typeof projectSchema>,
+  trustSourceFingerprint = false,
+): MaterialProject {
   const supplied = value.mapSettings as Partial<typeof DEFAULT_MAP_SETTINGS> | undefined;
+  const sourceTexture = value.sourceTexture
+    ? {
+        ...value.sourceTexture,
+        fingerprint: trustSourceFingerprint
+          ? value.sourceTexture.fingerprint
+          : undefined,
+      }
+    : null;
   return {
     ...value,
     schemaVersion: PROJECT_SCHEMA_VERSION,
-    sourceTexture: value.sourceTexture ?? null,
+    sourceTexture,
     mapSettings: {
       baseColor: { ...DEFAULT_MAP_SETTINGS.baseColor, ...supplied?.baseColor },
       height: { ...DEFAULT_MAP_SETTINGS.height, ...supplied?.height },
@@ -185,23 +202,8 @@ function normalizeProject(value: z.infer<typeof projectSchema>): MaterialProject
   } as MaterialProject;
 }
 
-function openDatabase() {
-  return new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
-    request.onupgradeneeded = () => {
-      const database = request.result;
-      if (!database.objectStoreNames.contains(PROJECT_STORE)) {
-        const store = database.createObjectStore(PROJECT_STORE, { keyPath: "id" });
-        store.createIndex("updatedAt", "updatedAt");
-      }
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error ?? new Error("Local storage is unavailable."));
-  });
-}
-
 export async function saveProjectLocal(project: MaterialProject) {
-  const database = await openDatabase();
+  const database = await openMaterialDatabase();
   return new Promise<void>((resolve, reject) => {
     const transaction = database.transaction(PROJECT_STORE, "readwrite");
     transaction.objectStore(PROJECT_STORE).put(project);
@@ -222,7 +224,7 @@ export async function loadLatestProject() {
 }
 
 export async function loadProjectsLocal() {
-  const database = await openDatabase();
+  const database = await openMaterialDatabase();
   return new Promise<MaterialProject[]>((resolve, reject) => {
     const request = database
       .transaction(PROJECT_STORE, "readonly")
@@ -233,7 +235,7 @@ export async function loadProjectsLocal() {
       const projects = request.result
         .map((value) => projectSchema.safeParse(value))
         .filter((result) => result.success)
-        .map((result) => normalizeProject(result.data))
+        .map((result) => normalizeProject(result.data, true))
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
       resolve(projects);
     };
@@ -245,7 +247,7 @@ export async function loadProjectsLocal() {
 }
 
 export async function deleteProjectLocal(projectId: string) {
-  const database = await openDatabase();
+  const database = await openMaterialDatabase();
   return new Promise<void>((resolve, reject) => {
     const transaction = database.transaction(PROJECT_STORE, "readwrite");
     transaction.objectStore(PROJECT_STORE).delete(projectId);
@@ -320,11 +322,25 @@ function getProjectEvaluationCache(project: MaterialProject) {
   }
 
   const evaluation = project.sourceTexture
-    ? evaluateSourceTexture(
+    ? getPersistentGeneratedMaps(
         project.sourceTexture,
         project.mapSettings,
         project.exportResolution,
-      )
+      ).then(async (cached) => {
+        if (cached) return cached;
+        const generated = await evaluateSourceTexture(
+          project.sourceTexture!,
+          project.mapSettings,
+          project.exportResolution,
+        );
+        void storePersistentGeneratedMaps(
+          project.sourceTexture!,
+          project.mapSettings,
+          project.exportResolution,
+          generated,
+        );
+        return generated;
+      })
     : Promise.resolve(evaluateMaterial(project, project.exportResolution));
   const cache = {
     project,

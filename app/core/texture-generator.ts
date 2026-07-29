@@ -4,6 +4,7 @@ import type {
   SourceTextureAsset,
   TextureMapChannel,
 } from "./material-types";
+import { fingerprintSourceFile } from "./generated-map-cache";
 
 const MAX_SOURCE_BYTES = 48 * 1024 * 1024;
 const MAX_SOURCE_EDGE = 16384;
@@ -38,7 +39,10 @@ export async function importSourceTexture(file: File): Promise<SourceTextureAsse
   if (!SUPPORTED_IMAGE_TYPES.includes(file.type as (typeof SUPPORTED_IMAGE_TYPES)[number])) {
     throw new Error("Use a PNG, JPEG, or WebP albedo image.");
   }
-  const dataUrl = await blobToDataUrl(file);
+  const [dataUrl, fingerprint] = await Promise.all([
+    blobToDataUrl(file),
+    fingerprintSourceFile(file),
+  ]);
   const image = await loadImage(dataUrl);
   if (!image.naturalWidth || !image.naturalHeight) {
     throw new Error("The albedo image has invalid dimensions.");
@@ -56,6 +60,7 @@ export async function importSourceTexture(file: File): Promise<SourceTextureAsse
     width: image.naturalWidth,
     height: image.naturalHeight,
     sizeBytes: file.size,
+    fingerprint,
   };
 }
 

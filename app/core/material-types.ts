@@ -32,6 +32,7 @@ export interface SourceTextureAsset {
   width: number;
   height: number;
   sizeBytes: number;
+  fingerprint?: string;
 }
 
 export interface MapGenerationSettings {

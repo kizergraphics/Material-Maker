@@ -128,8 +128,10 @@ test("keeps Babylon and Map Lab out of the initial studio and viewer bundles", a
 });
 
 test("keeps persistence local and creates only the PBR output node", async () => {
-  const [persistence, studio, preview, node, types, store, launcher, hosting, evaluationHook, mapLab, generationWorker, graphWorker, graphWorkerTypes, workerUrl, deferredTools] = await Promise.all([
+  const [persistence, localDatabase, generatedMapCache, studio, preview, node, types, store, launcher, hosting, evaluationHook, textureGenerator, mapLab, generationWorker, graphWorker, graphWorkerTypes, workerUrl, deferredTools] = await Promise.all([
     readFile(new URL("../app/core/material-persistence.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/core/local-database.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/core/generated-map-cache.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/components/MaterialStudio.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/MaterialPreview.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/MaterialNode.tsx", import.meta.url), "utf8"),
@@ -138,6 +140,7 @@ test("keeps persistence local and creates only the PBR output node", async () =>
     readFile(new URL("../launcher/Program.cs", import.meta.url), "utf8"),
     readFile(new URL("../.openai/hosting.json", import.meta.url), "utf8"),
     readFile(new URL("../app/core/use-material-evaluation.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/core/texture-generator.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/components/TextureMapLab.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/workers/material-generation.worker.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/workers/graph-evaluation.worker.ts", import.meta.url), "utf8"),
@@ -145,7 +148,9 @@ test("keeps persistence local and creates only the PBR output node", async () =>
     readFile(new URL("../app/core/worker-url.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/components/DeferredMaterialTools.tsx", import.meta.url), "utf8"),
   ]);
-  assert.match(persistence, /indexedDB\.open/);
+  assert.match(localDatabase, /indexedDB\.open/);
+  assert.match(localDatabase, /GENERATED_MAP_CACHE_STORE/);
+  assert.match(localDatabase, /createIndex\("createdAt",\s*"createdAt"\)/);
   assert.match(persistence, /privacy:\s*"local-only"/);
   assert.match(persistence, /textures\/height\.png/);
   assert.match(persistence, /textures\/ambient-occlusion\.png/);
@@ -226,6 +231,18 @@ test("keeps persistence local and creates only the PBR output node", async () =>
   assert.match(workerUrl, /window\.location\.origin/);
   assert.match(evaluationHook, /browserWorkerUrl/);
   assert.match(evaluationHook, /Promise\.resolve\(\)\.then\(evaluateInWorker\)/);
+  assert.match(evaluationHook, /getPersistentGeneratedMaps/);
+  assert.match(evaluationHook, /storePersistentGeneratedMaps/);
+  assert.match(textureGenerator, /fingerprintSourceFile/);
+  assert.match(generatedMapCache, /GENERATION_ALGORITHM_VERSION/);
+  assert.match(generatedMapCache, /MAX_PERSISTENT_CACHE_ENTRIES\s*=\s*3/);
+  assert.match(generatedMapCache, /fingerprintSourceTexture/);
+  assert.match(generatedMapCache, /fingerprintSettings/);
+  assert.match(generatedMapCache, /settings\.baseColor\.brightness/);
+  assert.doesNotMatch(generatedMapCache, /enabled:\s*settings\./);
+  assert.match(generatedMapCache, /isValidCacheRecord/);
+  assert.match(persistence, /getPersistentGeneratedMaps/);
+  assert.match(persistence, /storePersistentGeneratedMaps/);
   assert.match(studio, /browserWorkerUrl/);
   assert.match(studio, /graphThumbnailCacheRef/);
   assert.match(studio, /graphNodeSignature/);
