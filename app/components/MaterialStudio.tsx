@@ -62,6 +62,10 @@ import {
   loadProjectsLocal,
   saveProjectLocal,
 } from "../core/material-persistence";
+import {
+  compileMaterialGraph,
+  validateMaterialConnection,
+} from "../core/material-graph-compiler";
 import { useMaterialStore } from "../core/material-store";
 import {
   evaluateNodeMap,
@@ -586,39 +590,57 @@ function StudioWorkspace() {
     { nodes, edges, sourceTexture, mapSettings },
     256,
   );
+  const compiledGraph = useMemo(
+    () => compileMaterialGraph({ nodes, edges }),
+    [edges, nodes],
+  );
   const graphNodes = useMemo(() => {
     return nodes.map((node) => ({
       ...node,
       deletable: node.data.kind !== "output",
       data: {
         ...node.data,
+        validationIssues:
+          compiledGraph.diagnosticsByNode
+            .get(node.id)
+            ?.map((diagnostic) => diagnostic.message) ?? [],
         values: {
           ...node.data.values,
           thumbnail: graphNodeThumbnails[node.id] || node.data.values.thumbnail,
         },
       },
     }));
-  }, [graphNodeThumbnails, nodes]);
+  }, [compiledGraph, graphNodeThumbnails, nodes]);
   const graphConnectionStatus = useMemo(() => {
-    const output = nodes.find((node) => node.data.kind === "output");
-    const hasBaseColor = output
-      ? edges.some(
-          (edge) =>
-            edge.target === output.id && edge.targetHandle === "baseColor",
-        )
-      : false;
-    return hasBaseColor
-      ? {
-          title: "Live graph",
-          detail: "Connected changes update the preview",
-          ready: true,
-        }
-      : {
-          title: "Connect Base color",
-          detail: "Drag a node's output dot to PBR material → Base color",
-          ready: false,
-        };
-  }, [edges, nodes]);
+    const error = compiledGraph.diagnostics.find(
+      (diagnostic) => diagnostic.severity === "error",
+    );
+    if (error) {
+      return {
+        title: "Graph needs attention",
+        detail: error.message,
+        ready: false,
+      };
+    }
+    const warning = compiledGraph.diagnostics[0];
+    if (warning) {
+      return {
+        title: "Graph is incomplete",
+        detail: warning.message,
+        ready: false,
+      };
+    }
+    return {
+      title: "Live graph",
+      detail: "Connected changes update the preview",
+      ready: true,
+    };
+  }, [compiledGraph]);
+  const isValidMaterialConnection = useCallback(
+    (connection: Parameters<typeof validateMaterialConnection>[1]) =>
+      validateMaterialConnection({ nodes, edges }, connection).valid,
+    [edges, nodes],
+  );
 
   useEffect(() => {
     if (workspaceView !== "graph") return;
@@ -1242,7 +1264,7 @@ function StudioWorkspace() {
             defaultEdgeOptions={{
               style: { stroke: "#6a7682", strokeWidth: 1.5 },
             }}
-            isValidConnection={(connection) => connection.source !== connection.target}
+            isValidConnection={isValidMaterialConnection}
           >
             <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#303840" />
             <Controls showInteractive={false} position="bottom-left" />

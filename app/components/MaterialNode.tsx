@@ -38,10 +38,15 @@ export function MaterialNode(props: NodeProps<MaterialGraphNode>) {
   const nodeOutput = definition.outputs[0];
   const color = data.values.color;
   const thumbnail = data.values.thumbnail;
+  const validationIssues = Array.isArray(data.validationIssues)
+    ? data.validationIssues.filter(
+        (issue): issue is string => typeof issue === "string",
+      )
+    : [];
 
   return (
     <article
-      className={`material-node material-node--${data.category}${thumbnail ? " has-thumbnail" : ""}${selected ? " is-selected" : ""}`}
+      className={`material-node material-node--${data.category}${thumbnail ? " has-thumbnail" : ""}${validationIssues.length ? " is-invalid" : ""}${selected ? " is-selected" : ""}`}
       data-kind={data.kind}
     >
       <header className="material-node__header">
@@ -50,6 +55,15 @@ export function MaterialNode(props: NodeProps<MaterialGraphNode>) {
         </span>
         <span>{data.label}</span>
         <span className="material-node__type">{data.kind}</span>
+        {validationIssues.length ? (
+          <span
+            className="material-node__validation"
+            title={validationIssues.join("\n")}
+            aria-label={`${validationIssues.length} graph validation issue${validationIssues.length === 1 ? "" : "s"}`}
+          >
+            !
+          </span>
+        ) : null}
       </header>
 
       <div className="material-node__body">
@@ -83,6 +97,8 @@ export function MaterialNode(props: NodeProps<MaterialGraphNode>) {
             type="target"
             position={Position.Left}
             className="material-handle material-handle--input"
+            data-port-type={input.type}
+            title={`${input.label} · ${input.type}`}
           />
           <span>{input.label}</span>
         </div>
@@ -94,6 +110,8 @@ export function MaterialNode(props: NodeProps<MaterialGraphNode>) {
           type="source"
           position={Position.Right}
           className="material-handle material-handle--output"
+          data-port-type={nodeOutput.type}
+          title={`${nodeOutput.label} · ${nodeOutput.type}`}
         />
       ) : null}
     </article>

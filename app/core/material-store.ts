@@ -10,6 +10,7 @@ import {
   type XYPosition,
 } from "@xyflow/react";
 import { create } from "zustand";
+import { validateMaterialConnection } from "./material-graph-compiler";
 import {
   NODE_LIBRARY,
   createMaterialNodeData,
@@ -187,23 +188,33 @@ export const useMaterialStore = create<MaterialStore>((set, get) => ({
   },
 
   onConnect: (connection) =>
-    set((state) => ({
-      ...withCheckpoint(state),
-      edges: addEdge(
-        {
-          ...connection,
-          id: `edge-${crypto.randomUUID()}`,
-          animated: false,
-        },
-        state.edges.filter(
-          (edge) =>
-            !(
-              edge.target === connection.target &&
-              edge.targetHandle === connection.targetHandle
-            ),
+    set((state) => {
+      if (
+        !validateMaterialConnection(
+          { nodes: state.nodes, edges: state.edges },
+          connection,
+        ).valid
+      ) {
+        return state;
+      }
+      return {
+        ...withCheckpoint(state),
+        edges: addEdge(
+          {
+            ...connection,
+            id: `edge-${crypto.randomUUID()}`,
+            animated: false,
+          },
+          state.edges.filter(
+            (edge) =>
+              !(
+                edge.target === connection.target &&
+                edge.targetHandle === connection.targetHandle
+              ),
+          ),
         ),
-      ),
-    })),
+      };
+    }),
 
   addNode: (kind, position = { x: 20, y: 20 }) => {
     const definition = NODE_LIBRARY.find((item) => item.kind === kind);

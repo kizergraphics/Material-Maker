@@ -1,8 +1,8 @@
-import type {
-  MaterialGraphEdge,
-  MaterialGraphNode,
-  MaterialProject,
-} from "./material-types";
+import {
+  compileMaterialGraph,
+  type CompiledMaterialGraph,
+} from "./material-graph-compiler";
+import type { MaterialGraphNode, MaterialProject } from "./material-types";
 import {
   getMaterialNodeDefinition,
   type MaterialNodeSample,
@@ -27,22 +27,12 @@ export interface MaterialEvaluation {
 const clamp = (value: number, min = 0, max = 1) =>
   Math.min(max, Math.max(min, value));
 
-function sourceFor(
-  edges: MaterialGraphEdge[],
-  nodeId: string,
-  targetHandle: string,
-) {
-  return edges.find(
-    (edge) => edge.target === nodeId && edge.targetHandle === targetHandle,
-  )?.source;
-}
-
 function evaluateNode(
   nodeId: string | undefined,
   u: number,
   v: number,
   nodes: Map<string, MaterialGraphNode>,
-  edges: MaterialGraphEdge[],
+  compiledGraph: CompiledMaterialGraph,
   stack: Set<string>,
 ): ColorValue {
   if (!nodeId) return [0.5, 0.5, 0.5, 1];
@@ -58,11 +48,11 @@ function evaluateNode(
     values,
     sampleInput: (portId) =>
       evaluateNode(
-        sourceFor(edges, node.id, portId),
+        compiledGraph.sourceFor(node.id, portId),
         u,
         v,
         nodes,
-        edges,
+        compiledGraph,
         stack,
       ),
   }) ?? [0.5, 0.5, 0.5, 1];
@@ -86,22 +76,24 @@ export function evaluateMaterial(
   project: Pick<MaterialProject, "nodes" | "edges">,
   size = 256,
 ): MaterialEvaluation {
-  const nodes = new Map(project.nodes.map((node) => [node.id, node]));
-  const output = project.nodes.find((node) => node.data.kind === "output");
-  const warnings: string[] = [];
-  if (!output) warnings.push("The graph has no PBR output node.");
+  const compiledGraph = compileMaterialGraph(project);
+  const nodes = new Map(compiledGraph.nodesById);
+  const output = compiledGraph.outputNode;
+  const warnings = compiledGraph.diagnostics.map(
+    (diagnostic) => diagnostic.message,
+  );
 
   const baseColorSource = output
-    ? sourceFor(project.edges, output.id, "baseColor")
+    ? compiledGraph.sourceFor(output.id, "baseColor")
     : undefined;
   const normalSource = output
-    ? sourceFor(project.edges, output.id, "normal")
+    ? compiledGraph.sourceFor(output.id, "normal")
     : undefined;
   const roughnessSource = output
-    ? sourceFor(project.edges, output.id, "roughness")
+    ? compiledGraph.sourceFor(output.id, "roughness")
     : undefined;
   const metallicSource = output
-    ? sourceFor(project.edges, output.id, "metallic")
+    ? compiledGraph.sourceFor(output.id, "metallic")
     : undefined;
 
   if (!baseColorSource) warnings.push("Base color is not connected.");
@@ -114,7 +106,7 @@ export function evaluateMaterial(
       0.5,
       0.5,
       nodes,
-      project.edges,
+      compiledGraph,
       new Set(),
     )[0],
   );
@@ -124,7 +116,7 @@ export function evaluateMaterial(
       0.5,
       0.5,
       nodes,
-      project.edges,
+      compiledGraph,
       new Set(),
     )[0],
   );
@@ -139,7 +131,7 @@ export function evaluateMaterial(
   const normalNode = normalSource ? nodes.get(normalSource) : undefined;
   const heightSource =
     normalNode?.data.kind === "normal"
-      ? sourceFor(project.edges, normalNode.id, "height")
+      ? compiledGraph.sourceFor(normalNode.id, "height")
       : normalSource;
   const normalStrength = normalNode?.data.values.strength ?? 1;
 
@@ -153,7 +145,7 @@ export function evaluateMaterial(
         u,
         v,
         nodes,
-        project.edges,
+        compiledGraph,
         new Set(),
       );
       writePixel(albedo, offset, base);
@@ -163,7 +155,7 @@ export function evaluateMaterial(
         (u - step + 1) % 1,
         v,
         nodes,
-        project.edges,
+        compiledGraph,
         new Set(),
       )[0];
       const heightR = evaluateNode(
@@ -171,7 +163,7 @@ export function evaluateMaterial(
         (u + step) % 1,
         v,
         nodes,
-        project.edges,
+        compiledGraph,
         new Set(),
       )[0];
       const heightD = evaluateNode(
@@ -179,7 +171,7 @@ export function evaluateMaterial(
         u,
         (v - step + 1) % 1,
         nodes,
-        project.edges,
+        compiledGraph,
         new Set(),
       )[0];
       const heightU = evaluateNode(
@@ -187,7 +179,7 @@ export function evaluateMaterial(
         u,
         (v + step) % 1,
         nodes,
-        project.edges,
+        compiledGraph,
         new Set(),
       )[0];
       const heightValue = evaluateNode(
@@ -195,7 +187,7 @@ export function evaluateMaterial(
         u,
         v,
         nodes,
-        project.edges,
+        compiledGraph,
         new Set(),
       )[0];
       let nx = (heightL - heightR) * normalStrength * 2;
@@ -236,7 +228,8 @@ export function evaluateNodeMap(
   nodeId: string,
   size = 64,
 ) {
-  const nodes = new Map(project.nodes.map((node) => [node.id, node]));
+  const compiledGraph = compileMaterialGraph(project);
+  const nodes = new Map(compiledGraph.nodesById);
   const node = nodes.get(nodeId);
   const pixels = new Uint8ClampedArray(size * size * 4);
   if (!node) return pixels;
@@ -246,7 +239,7 @@ export function evaluateNodeMap(
 
   const step = 1 / size;
   const heightSource = node.data.kind === "normal"
-    ? sourceFor(project.edges, node.id, "height")
+    ? compiledGraph.sourceFor(node.id, "height")
     : undefined;
   const normalStrength = node.data.values.strength ?? 1;
 
@@ -259,7 +252,7 @@ export function evaluateNodeMap(
         writePixel(
           pixels,
           offset,
-          evaluateNode(node.id, u, v, nodes, project.edges, new Set()),
+          evaluateNode(node.id, u, v, nodes, compiledGraph, new Set()),
         );
         continue;
       }
@@ -269,7 +262,7 @@ export function evaluateNodeMap(
         (u - step + 1) % 1,
         v,
         nodes,
-        project.edges,
+        compiledGraph,
         new Set(),
       )[0];
       const heightR = evaluateNode(
@@ -277,7 +270,7 @@ export function evaluateNodeMap(
         (u + step) % 1,
         v,
         nodes,
-        project.edges,
+        compiledGraph,
         new Set(),
       )[0];
       const heightD = evaluateNode(
@@ -285,7 +278,7 @@ export function evaluateNodeMap(
         u,
         (v - step + 1) % 1,
         nodes,
-        project.edges,
+        compiledGraph,
         new Set(),
       )[0];
       const heightU = evaluateNode(
@@ -293,7 +286,7 @@ export function evaluateNodeMap(
         u,
         (v + step) % 1,
         nodes,
-        project.edges,
+        compiledGraph,
         new Set(),
       )[0];
       let nx = (heightL - heightR) * normalStrength * 2;

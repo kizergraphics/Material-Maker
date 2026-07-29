@@ -332,7 +332,7 @@ export const MATERIAL_NODE_DEFINITIONS: readonly MaterialNodeDefinition[] = [
     description: "The final physically based material channels.",
     userCreatable: false,
     inputs: [
-      { id: "baseColor", label: "Base color", type: "color" },
+      { id: "baseColor", label: "Base color", type: "color", required: true },
       { id: "normal", label: "Normal", type: "normal" },
       { id: "roughness", label: "Roughness", type: "scalar" },
       { id: "metallic", label: "Metallic", type: "scalar" },
