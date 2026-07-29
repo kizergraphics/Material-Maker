@@ -1,29 +1,23 @@
 import type { Edge, Node } from "@xyflow/react";
+import { createMaterialNodeData } from "./material-node-registry";
+import type {
+  MaterialNodeCategory,
+  MaterialNodeKind,
+  NodeValueMap,
+  TextureMapChannel,
+} from "./material-node-registry";
+
+export type {
+  MaterialNodeCategory,
+  MaterialNodeKind,
+  NodeValueMap,
+  TextureMapChannel,
+} from "./material-node-registry";
 
 export const PROJECT_SCHEMA_VERSION = 3 as const;
 
-export type MaterialNodeKind =
-  | "color"
-  | "noise"
-  | "levels"
-  | "blend"
-  | "roughness"
-  | "metallic"
-  | "normal"
-  | "textureMap"
-  | "output";
-
 export type PreviewShape = "sphere" | "cube" | "plane";
-export type PreviewChannel =
-  | "material"
-  | "baseColor"
-  | "height"
-  | "normal"
-  | "roughness"
-  | "metallic"
-  | "ao";
-
-export type TextureMapChannel = Exclude<PreviewChannel, "material">;
+export type PreviewChannel = "material" | TextureMapChannel;
 
 export interface SourceTextureAsset {
   name: string;
@@ -87,26 +81,10 @@ export const DEFAULT_MAP_SETTINGS: MapGenerationSettings = {
   ao: { enabled: true, strength: 1.2, radius: 4, bias: 0 },
 };
 
-export type NodeValueMap = {
-  color?: string;
-  scale?: number;
-  contrast?: number;
-  seed?: number;
-  minimum?: number;
-  maximum?: number;
-  gamma?: number;
-  opacity?: number;
-  value?: number;
-  strength?: number;
-  mapChannel?: TextureMapChannel;
-  enabled?: boolean;
-  thumbnail?: string;
-};
-
 export type MaterialNodeData = Record<string, unknown> & {
   label: string;
   kind: MaterialNodeKind;
-  category: "input" | "generator" | "filter" | "blend" | "output";
+  category: MaterialNodeCategory;
   values: NodeValueMap;
 };
 
@@ -145,64 +123,6 @@ export interface MaterialPackManifest {
   privacy: "local-only";
 }
 
-export const NODE_LIBRARY: Array<{
-  kind: MaterialNodeKind;
-  label: string;
-  category: MaterialNodeData["category"];
-  description: string;
-  defaultValues: NodeValueMap;
-}> = [
-  {
-    kind: "color",
-    label: "Base color",
-    category: "input",
-    description: "A color value in sRGB space.",
-    defaultValues: { color: "#76706a" },
-  },
-  {
-    kind: "noise",
-    label: "Value noise",
-    category: "generator",
-    description: "Deterministic tileable value noise.",
-    defaultValues: { scale: 8, contrast: 0.62, seed: 14 },
-  },
-  {
-    kind: "levels",
-    label: "Levels",
-    category: "filter",
-    description: "Remap the tonal range of an input.",
-    defaultValues: { minimum: 0.18, maximum: 0.88, gamma: 1.08 },
-  },
-  {
-    kind: "blend",
-    label: "Blend",
-    category: "blend",
-    description: "Mix two color or scalar streams.",
-    defaultValues: { opacity: 0.54 },
-  },
-  {
-    kind: "roughness",
-    label: "Roughness",
-    category: "input",
-    description: "Linear surface roughness.",
-    defaultValues: { value: 0.58 },
-  },
-  {
-    kind: "metallic",
-    label: "Metallic",
-    category: "input",
-    description: "Metal-versus-dielectric response.",
-    defaultValues: { value: 0.82 },
-  },
-  {
-    kind: "normal",
-    label: "Normal from height",
-    category: "filter",
-    description: "Derive a tangent-space normal map.",
-    defaultValues: { strength: 1.35 },
-  },
-];
-
 export function createStarterProject(): MaterialProject {
   const now = new Date().toISOString();
 
@@ -217,12 +137,7 @@ export function createStarterProject(): MaterialProject {
         id: "material-output",
         type: "materialNode",
         position: { x: 80, y: 40 },
-        data: {
-          label: "PBR material",
-          kind: "output",
-          category: "output",
-          values: {},
-        },
+        data: createMaterialNodeData("output"),
       },
     ],
     edges: [],

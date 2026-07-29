@@ -79,10 +79,13 @@ import {
 import { useMaterialEvaluation } from "../core/use-material-evaluation";
 import {
   NODE_LIBRARY,
-  type MaterialGraphNode,
+  getMaterialNodeDefinition,
   type MaterialNodeKind,
-  type MaterialProject,
   type NodeValueMap,
+} from "../core/material-node-registry";
+import {
+  type MaterialGraphNode,
+  type MaterialProject,
   type PreviewChannel,
   type PreviewShape,
   type TextureMapChannel,
@@ -438,6 +441,7 @@ function NodeInspector({ node }: { node: MaterialGraphNode | null }) {
 
   const update = (values: Partial<NodeValueMap>) => updateNodeValue(node.id, values);
   const values = node.data.values;
+  const definition = getMaterialNodeDefinition(node.data.kind);
 
   return (
     <div className="inspector-form">
@@ -451,110 +455,44 @@ function NodeInspector({ node }: { node: MaterialGraphNode | null }) {
         </span>
       </div>
 
-      {node.data.kind === "color" ? (
-        <label className="color-field">
-          <span>Color</span>
-          <span className="color-field__control">
-            <input
-              type="color"
-              value={values.color ?? "#808080"}
-              onChange={(event) => update({ color: event.target.value })}
-            />
-            <code>{values.color ?? "#808080"}</code>
-          </span>
-        </label>
-      ) : null}
-
-      {node.data.kind === "noise" ? (
-        <>
+      {definition.parameters.map((parameter) =>
+        parameter.control === "color" ? (
+          <label className="color-field" key={parameter.key}>
+            <span>{parameter.label}</span>
+            <span className="color-field__control">
+              <input
+                type="color"
+                value={
+                  typeof values[parameter.key] === "string"
+                    ? values[parameter.key]
+                    : parameter.defaultValue
+                }
+                onChange={(event) =>
+                  update({ [parameter.key]: event.target.value })
+                }
+              />
+              <code>
+                {typeof values[parameter.key] === "string"
+                  ? values[parameter.key]
+                  : parameter.defaultValue}
+              </code>
+            </span>
+          </label>
+        ) : (
           <RangeField
-            label="Scale"
-            value={values.scale ?? 8}
-            min={1}
-            max={32}
-            step={1}
-            onChange={(scale) => update({ scale })}
+            key={parameter.key}
+            label={parameter.label}
+            value={
+              (values[parameter.key] as number | undefined) ??
+              parameter.defaultValue
+            }
+            min={parameter.min}
+            max={parameter.max}
+            step={parameter.step}
+            onChange={(value) => update({ [parameter.key]: value })}
           />
-          <RangeField
-            label="Contrast"
-            value={values.contrast ?? 0.5}
-            min={0}
-            max={1}
-            step={0.01}
-            onChange={(contrast) => update({ contrast })}
-          />
-          <RangeField
-            label="Seed"
-            value={values.seed ?? 1}
-            min={1}
-            max={100}
-            step={1}
-            onChange={(seed) => update({ seed })}
-          />
-        </>
-      ) : null}
-
-      {node.data.kind === "levels" ? (
-        <>
-          <RangeField
-            label="Black point"
-            value={values.minimum ?? 0}
-            min={0}
-            max={0.95}
-            step={0.01}
-            onChange={(minimum) => update({ minimum })}
-          />
-          <RangeField
-            label="White point"
-            value={values.maximum ?? 1}
-            min={0.05}
-            max={1}
-            step={0.01}
-            onChange={(maximum) => update({ maximum })}
-          />
-          <RangeField
-            label="Gamma"
-            value={values.gamma ?? 1}
-            min={0.2}
-            max={3}
-            step={0.01}
-            onChange={(gamma) => update({ gamma })}
-          />
-        </>
-      ) : null}
-
-      {node.data.kind === "blend" ? (
-        <RangeField
-          label="Opacity"
-          value={values.opacity ?? 0.5}
-          min={0}
-          max={1}
-          step={0.01}
-          onChange={(opacity) => update({ opacity })}
-        />
-      ) : null}
-
-      {node.data.kind === "roughness" || node.data.kind === "metallic" ? (
-        <RangeField
-          label={node.data.kind === "roughness" ? "Roughness" : "Metalness"}
-          value={values.value ?? 0.5}
-          min={0}
-          max={1}
-          step={0.01}
-          onChange={(value) => update({ value })}
-        />
-      ) : null}
-
-      {node.data.kind === "normal" ? (
-        <RangeField
-          label="Strength"
-          value={values.strength ?? 1}
-          min={0}
-          max={4}
-          step={0.01}
-          onChange={(strength) => update({ strength })}
-        />
-      ) : null}
+        ),
+      )}
 
       {node.data.kind === "textureMap" ? (
         <div className="map-overview">

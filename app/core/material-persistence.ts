@@ -1,6 +1,11 @@
 import JSZip from "jszip";
 import { z } from "zod";
 import {
+  MATERIAL_NODE_CATEGORIES,
+  MATERIAL_NODE_KINDS,
+  MATERIAL_TEXTURE_CHANNELS,
+} from "./material-node-registry";
+import {
   canvasToBlob,
   evaluateMaterial,
   pixelsToCanvas,
@@ -106,8 +111,8 @@ const graphNodeSchema = z.object({
   position: z.object({ x: finiteNumber, y: finiteNumber }),
   data: z.object({
     label: z.string().min(1).max(160),
-    kind: z.enum(["color", "noise", "levels", "blend", "roughness", "metallic", "normal", "textureMap", "output"]),
-    category: z.enum(["input", "generator", "filter", "blend", "output"]),
+    kind: z.enum(MATERIAL_NODE_KINDS),
+    category: z.enum(MATERIAL_NODE_CATEGORIES),
     values: nodeValuesSchema,
   }),
 });
@@ -155,14 +160,9 @@ const projectSchema = z.object({
   edges: z.array(graphEdgeSchema).max(3000),
   preview: z.object({
     shape: z.enum(["sphere", "cube", "plane"]),
-    channel: z.enum([
-      "material",
-      "baseColor",
-      "height",
-      "normal",
-      "roughness",
-      "metallic",
-      "ao",
+    channel: z.union([
+      z.literal("material"),
+      z.enum(MATERIAL_TEXTURE_CHANNELS),
     ]),
     showGrid: z.boolean(),
     autoRotate: z.boolean(),

@@ -13,11 +13,11 @@ import {
   Waves,
 } from "lucide-react";
 import type { ComponentType } from "react";
-import type {
-  MaterialGraphNode,
-  MaterialNodeData,
-  MaterialNodeKind,
-} from "../core/material-types";
+import {
+  getMaterialNodeDefinition,
+  type MaterialNodeKind,
+} from "../core/material-node-registry";
+import type { MaterialGraphNode } from "../core/material-types";
 
 const icons: Record<MaterialNodeKind, ComponentType<{ size?: number }>> = {
   color: Palette,
@@ -31,50 +31,11 @@ const icons: Record<MaterialNodeKind, ComponentType<{ size?: number }>> = {
   output: Box,
 };
 
-const inputs: Partial<Record<MaterialNodeKind, Array<{ id: string; label: string }>>> = {
-  levels: [{ id: "in", label: "Input" }],
-  blend: [
-    { id: "a", label: "Base" },
-    { id: "b", label: "Blend" },
-  ],
-  normal: [{ id: "height", label: "Height" }],
-  output: [
-    { id: "baseColor", label: "Base color" },
-    { id: "normal", label: "Normal" },
-    { id: "roughness", label: "Roughness" },
-    { id: "metallic", label: "Metallic" },
-    { id: "height", label: "Height" },
-    { id: "ao", label: "AO" },
-  ],
-};
-
-function valueSummary(data: MaterialNodeData) {
-  const values = data.values;
-  switch (data.kind) {
-    case "color":
-      return values.color ?? "#808080";
-    case "noise":
-      return `${values.scale ?? 8}× tile · seed ${values.seed ?? 1}`;
-    case "levels":
-      return `${(values.minimum ?? 0).toFixed(2)} — ${(values.maximum ?? 1).toFixed(2)}`;
-    case "blend":
-      return `${Math.round((values.opacity ?? 0.5) * 100)}% opacity`;
-    case "roughness":
-    case "metallic":
-      return (values.value ?? 0.5).toFixed(2);
-    case "normal":
-      return `${(values.strength ?? 1).toFixed(2)} strength`;
-    case "textureMap":
-      return `${values.mapChannel ?? "texture"}${values.enabled === false ? " · disabled" : " · generated"}`;
-    default:
-      return "Metallic / roughness";
-  }
-}
-
 export function MaterialNode(props: NodeProps<MaterialGraphNode>) {
   const { data, selected } = props;
   const Icon = icons[data.kind];
-  const nodeInputs = inputs[data.kind] ?? [];
+  const definition = getMaterialNodeDefinition(data.kind);
+  const nodeOutput = definition.outputs[0];
   const color = data.values.color;
   const thumbnail = data.values.thumbnail;
 
@@ -106,10 +67,12 @@ export function MaterialNode(props: NodeProps<MaterialGraphNode>) {
             alt={`${data.values.mapChannel ?? "Generated"} map preview`}
           />
         ) : null}
-        <span className="material-node__summary">{valueSummary(data)}</span>
+        <span className="material-node__summary">
+          {definition.summarize(data.values)}
+        </span>
       </div>
 
-      {nodeInputs.map((input, index) => (
+      {definition.inputs.map((input, index) => (
         <div
           className="material-node__input"
           key={input.id}
@@ -125,9 +88,9 @@ export function MaterialNode(props: NodeProps<MaterialGraphNode>) {
         </div>
       ))}
 
-      {data.kind !== "output" ? (
+      {nodeOutput ? (
         <Handle
-          id={data.kind === "normal" ? "normal" : "out"}
+          id={nodeOutput.id}
           type="source"
           position={Position.Right}
           className="material-handle material-handle--output"

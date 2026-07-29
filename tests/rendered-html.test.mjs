@@ -185,11 +185,11 @@ test("keeps persistence local and creates only the PBR output node", async () =>
   assert.match(node, /material-node__thumbnail/);
   assert.match(
     types,
-    /createStarterProject\(\)[\s\S]*?nodes:\s*\[[\s\S]*?id:\s*"material-output"[\s\S]*?kind:\s*"output"[\s\S]*?\],[\s\S]*?edges:\s*\[\],/,
+    /createStarterProject\(\)[\s\S]*?nodes:\s*\[[\s\S]*?id:\s*"material-output"[\s\S]*?data:\s*createMaterialNodeData\("output"\)[\s\S]*?\],[\s\S]*?edges:\s*\[\],/,
   );
   assert.match(
     store,
-    /existingOutput\s*\?\?\s*\{[\s\S]*?id:\s*"material-output"[\s\S]*?kind:\s*"output"[\s\S]*?\(existingOutput\s*\?\s*\[\]\s*:\s*\[output\]\)/,
+    /existingOutput\s*\?\?\s*\{[\s\S]*?id:\s*"material-output"[\s\S]*?data:\s*createMaterialNodeData\("output"\)[\s\S]*?\(existingOutput\s*\?\s*\[\]\s*:\s*\[output\]\)/,
   );
   assert.match(store, /function ensureMaterialOutput/);
   assert.match(

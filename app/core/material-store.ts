@@ -11,16 +11,19 @@ import {
 } from "@xyflow/react";
 import { create } from "zustand";
 import {
-  DEFAULT_MAP_SETTINGS,
   NODE_LIBRARY,
+  createMaterialNodeData,
+  type MaterialNodeKind,
+  type NodeValueMap,
+} from "./material-node-registry";
+import {
+  DEFAULT_MAP_SETTINGS,
   PROJECT_SCHEMA_VERSION,
   createStarterProject,
   type MaterialGraphEdge,
   type MaterialGraphNode,
-  type MaterialNodeKind,
   type MaterialProject,
   type MapGenerationSettings,
-  type NodeValueMap,
   type ExportResolution,
   type PreviewChannel,
   type PreviewSettings,
@@ -127,12 +130,7 @@ function ensureMaterialOutput(nodes: MaterialGraphNode[]) {
     id: "material-output",
     type: "materialNode",
     position: { x: rightmostX + 320, y: 40 },
-    data: {
-      label: "PBR material",
-      kind: "output",
-      category: "output",
-      values: {},
-    },
+    data: createMaterialNodeData("output"),
   };
   return [...nodes, output];
 }
@@ -214,12 +212,7 @@ export const useMaterialStore = create<MaterialStore>((set, get) => ({
       id: `${kind}-${crypto.randomUUID()}`,
       type: "materialNode",
       position,
-      data: {
-        label: definition.label,
-        kind,
-        category: definition.category,
-        values: { ...definition.defaultValues },
-      },
+      data: createMaterialNodeData(kind),
     };
     set((state) => ({
       ...withCheckpoint(state),
@@ -244,28 +237,21 @@ export const useMaterialStore = create<MaterialStore>((set, get) => ({
         id: "material-output",
         type: "materialNode",
         position: { x: 80, y: 40 },
-        data: {
-          label: "PBR material",
-          kind: "output",
-          category: "output",
-          values: {},
-        },
+        data: createMaterialNodeData("output"),
       };
       const generatedIds = new Set(channels.map((channel) => `generated-map-${channel.id}`));
       const generatedNodes: MaterialGraphNode[] = channels.map((channel, index) => ({
         id: `generated-map-${channel.id}`,
         type: "materialNode",
         position: { x: output.position.x - 310, y: output.position.y - 72 + index * 96 },
-        data: {
+        data: createMaterialNodeData("textureMap", {
           label: channel.label,
-          kind: "textureMap",
-          category: "input",
           values: {
             mapChannel: channel.id,
             enabled: state.mapSettings[channel.id].enabled,
             thumbnail: thumbnails[channel.id],
           },
-        },
+        }),
       }));
       const outputHandles = new Set<TextureMapChannel>(channels.map((channel) => channel.id));
       const retainedEdges = state.edges.filter(
