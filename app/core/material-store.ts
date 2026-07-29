@@ -117,6 +117,26 @@ function withCheckpoint(state: MaterialStore) {
   };
 }
 
+function ensureMaterialOutput(nodes: MaterialGraphNode[]) {
+  if (nodes.some((node) => node.data.kind === "output")) return nodes;
+  const rightmostX = nodes.reduce(
+    (maximum, node) => Math.max(maximum, node.position.x),
+    -240,
+  );
+  const output: MaterialGraphNode = {
+    id: "material-output",
+    type: "materialNode",
+    position: { x: rightmostX + 320, y: 40 },
+    data: {
+      label: "PBR material",
+      kind: "output",
+      category: "output",
+      values: {},
+    },
+  };
+  return [...nodes, output];
+}
+
 export const useMaterialStore = create<MaterialStore>((set, get) => ({
   projectId: null,
   projectName: "",
@@ -138,13 +158,21 @@ export const useMaterialStore = create<MaterialStore>((set, get) => ({
   setSelectedNode: (nodeId) => set({ selectedNodeId: nodeId }),
 
   onNodesChange: (changes) => {
-    const shouldCheckpoint = changes.some(
+    const outputIds = new Set(
+      get()
+        .nodes.filter((node) => node.data.kind === "output")
+        .map((node) => node.id),
+    );
+    const allowedChanges = changes.filter(
+      (change) => !(change.type === "remove" && outputIds.has(change.id)),
+    );
+    const shouldCheckpoint = allowedChanges.some(
       (change) => change.type === "remove" || change.type === "add",
     );
     set((state) => ({
       ...(shouldCheckpoint ? withCheckpoint(state) : {}),
-      nodes: applyNodeChanges(changes, state.nodes),
-      selectedNodeId: changes.some(
+      nodes: applyNodeChanges(allowedChanges, state.nodes),
+      selectedNodeId: allowedChanges.some(
         (change) => change.type === "remove" && change.id === state.selectedNodeId,
       )
         ? null
@@ -387,7 +415,7 @@ export const useMaterialStore = create<MaterialStore>((set, get) => ({
       projectName: project.name,
       createdAt: project.createdAt,
       hasActiveProject: true,
-      nodes: project.nodes,
+      nodes: ensureMaterialOutput(project.nodes),
       edges: project.edges,
       preview: project.preview,
       sourceTexture: project.sourceTexture,

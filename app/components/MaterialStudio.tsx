@@ -87,6 +87,7 @@ import {
   type PreviewShape,
   type TextureMapChannel,
 } from "../core/material-types";
+import { browserWorkerUrl } from "../core/worker-url";
 import {
   DeferredMaterialPreview,
   DeferredTextureMapInspector,
@@ -650,6 +651,7 @@ function StudioWorkspace() {
   const graphNodes = useMemo(() => {
     return nodes.map((node) => ({
       ...node,
+      deletable: node.data.kind !== "output",
       data: {
         ...node.data,
         values: {
@@ -659,6 +661,26 @@ function StudioWorkspace() {
       },
     }));
   }, [graphNodeThumbnails, nodes]);
+  const graphConnectionStatus = useMemo(() => {
+    const output = nodes.find((node) => node.data.kind === "output");
+    const hasBaseColor = output
+      ? edges.some(
+          (edge) =>
+            edge.target === output.id && edge.targetHandle === "baseColor",
+        )
+      : false;
+    return hasBaseColor
+      ? {
+          title: "Live graph",
+          detail: "Connected changes update the preview",
+          ready: true,
+        }
+      : {
+          title: "Connect Base color",
+          detail: "Drag a node's output dot to PBR material → Base color",
+          ready: false,
+        };
+  }, [edges, nodes]);
 
   useEffect(() => {
     if (workspaceView !== "graph") return;
@@ -690,16 +712,25 @@ function StudioWorkspace() {
         if (typeof Worker === "undefined") {
           request = Promise.resolve(evaluateOnMainThread());
         } else {
-          worker = new Worker(
-            new URL("../workers/graph-evaluation.worker.ts", import.meta.url),
-            { type: "module", name: "forge-graph-thumbnails" },
-          );
-          request = evaluateGraphNodeMapsInWorker(
-            worker,
-            nodes,
-            edges,
-            nodeIds,
-          ).catch(() => evaluateOnMainThread());
+          request = Promise.resolve()
+            .then(() => {
+              worker = new Worker(
+                browserWorkerUrl(
+                  new URL(
+                    "../workers/graph-evaluation.worker.ts",
+                    import.meta.url,
+                  ),
+                ),
+                { type: "module", name: "forge-graph-thumbnails" },
+              );
+              return evaluateGraphNodeMapsInWorker(
+                worker,
+                nodes,
+                edges,
+                nodeIds,
+              );
+            })
+            .catch(() => evaluateOnMainThread());
         }
 
         void request
@@ -1285,9 +1316,12 @@ function StudioWorkspace() {
               maskColor="rgba(9, 12, 15, .74)"
             />
           </ReactFlow>
-          <div className="graph-callout">
+          <div className={`graph-callout${graphConnectionStatus.ready ? "" : " is-guidance"}`}>
             <span className="graph-callout__dot" />
-            <div><strong>Live graph</strong><span>Changes evaluate locally</span></div>
+            <div>
+              <strong>{graphConnectionStatus.title}</strong>
+              <span>{graphConnectionStatus.detail}</span>
+            </div>
             {sourceTexture ? <button className="button button--ghost" onClick={sendMapsToGraph}><GitBranch size={12} /> Place Map Lab maps</button> : null}
           </div>
         </section>

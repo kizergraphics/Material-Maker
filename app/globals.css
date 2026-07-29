@@ -1205,6 +1205,11 @@ input:focus-visible {
   box-shadow: 0 0 0 3px rgba(98,181,141,.12);
 }
 
+.graph-callout.is-guidance .graph-callout__dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
 .graph-callout strong,
 .graph-callout span {
   display: block;

@@ -23,6 +23,7 @@ import {
   textureMapChannels,
   type PreparedSourceTexture,
 } from "./texture-generator";
+import { browserWorkerUrl } from "./worker-url";
 
 type SourceGeneration = {
   source: NonNullable<MaterialProject["sourceTexture"]>;
@@ -114,7 +115,9 @@ function useGraphMaterialEvaluation(
     const evaluateInWorker = () => {
       terminateWorker();
       const worker = new Worker(
-        new URL("../workers/graph-evaluation.worker.ts", import.meta.url),
+        browserWorkerUrl(
+          new URL("../workers/graph-evaluation.worker.ts", import.meta.url),
+        ),
         { type: "module", name: "forge-graph-evaluation" },
       );
       workerRef.current = worker;
@@ -156,7 +159,7 @@ function useGraphMaterialEvaluation(
         const canUseWorker =
           !workerDisabledRef.current && typeof Worker !== "undefined";
         const request = canUseWorker
-          ? evaluateInWorker().catch((reason) => {
+          ? Promise.resolve().then(evaluateInWorker).catch((reason) => {
               if (!isCurrent()) throw reason;
               workerDisabledRef.current = true;
               return evaluateOnMainThread();
@@ -318,7 +321,9 @@ export function useMaterialEvaluation(
       }
 
       const worker = new Worker(
-        new URL("../workers/material-generation.worker.ts", import.meta.url),
+        browserWorkerUrl(
+          new URL("../workers/material-generation.worker.ts", import.meta.url),
+        ),
         { type: "module", name: "forge-map-generation" },
       );
       const state: GenerationWorkerState = {

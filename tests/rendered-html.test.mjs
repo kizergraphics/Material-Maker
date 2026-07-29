@@ -128,7 +128,7 @@ test("keeps Babylon and Map Lab out of the initial studio and viewer bundles", a
 });
 
 test("keeps persistence local and creates only the PBR output node", async () => {
-  const [persistence, studio, preview, node, types, store, launcher, hosting, evaluationHook, mapLab, generationWorker, graphWorker, graphWorkerTypes, deferredTools] = await Promise.all([
+  const [persistence, studio, preview, node, types, store, launcher, hosting, evaluationHook, mapLab, generationWorker, graphWorker, graphWorkerTypes, workerUrl, deferredTools] = await Promise.all([
     readFile(new URL("../app/core/material-persistence.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/components/MaterialStudio.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/MaterialPreview.tsx", import.meta.url), "utf8"),
@@ -142,6 +142,7 @@ test("keeps persistence local and creates only the PBR output node", async () =>
     readFile(new URL("../app/workers/material-generation.worker.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/workers/graph-evaluation.worker.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/core/graph-evaluation-worker-types.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/core/worker-url.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/components/DeferredMaterialTools.tsx", import.meta.url), "utf8"),
   ]);
   assert.match(persistence, /indexedDB\.open/);
@@ -185,6 +186,14 @@ test("keeps persistence local and creates only the PBR output node", async () =>
     store,
     /existingOutput\s*\?\?\s*\{[\s\S]*?id:\s*"material-output"[\s\S]*?kind:\s*"output"[\s\S]*?\(existingOutput\s*\?\s*\[\]\s*:\s*\[output\]\)/,
   );
+  assert.match(store, /function ensureMaterialOutput/);
+  assert.match(
+    store,
+    /change\.type === "remove"\s*&&\s*outputIds\.has\(change\.id\)/,
+  );
+  assert.match(store, /nodes:\s*ensureMaterialOutput\(project\.nodes\)/);
+  assert.match(studio, /deletable:\s*node\.data\.kind\s*!==\s*"output"/);
+  assert.match(studio, /Connect Base color/);
   assert.doesNotMatch(types, /Warm alloy|Micro pitting|Surface variation/);
   assert.match(launcher, /ResolveAppPort\(stateDirectory\)/);
   assert.match(launcher, /app-port\.txt/);
@@ -213,6 +222,11 @@ test("keeps persistence local and creates only the PBR output node", async () =>
   assert.match(graphWorker, /evaluateNodeMap/);
   assert.match(graphWorker, /transferablesFor/);
   assert.match(graphWorkerTypes, /projectForGraphWorker/);
+  assert.match(workerUrl, /assetUrl\.protocol\s*!==\s*"file:"/);
+  assert.match(workerUrl, /window\.location\.origin/);
+  assert.match(evaluationHook, /browserWorkerUrl/);
+  assert.match(evaluationHook, /Promise\.resolve\(\)\.then\(evaluateInWorker\)/);
+  assert.match(studio, /browserWorkerUrl/);
   assert.match(studio, /graphThumbnailCacheRef/);
   assert.match(studio, /graphNodeSignature/);
   assert.match(studio, /forge-graph-thumbnails/);
