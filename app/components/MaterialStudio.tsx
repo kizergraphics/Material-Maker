@@ -8,6 +8,7 @@ import {
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
+  type Connection,
   type NodeTypes,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
@@ -604,6 +605,7 @@ function StudioWorkspace() {
   const graphNodes = useMemo(() => {
     return nodes.map((node) => ({
       ...node,
+      selected: node.id === selectedNodeId,
       deletable: node.data.kind !== "output",
       data: {
         ...node.data,
@@ -617,7 +619,7 @@ function StudioWorkspace() {
         },
       },
     }));
-  }, [compiledGraph, graphNodeThumbnails, nodes]);
+  }, [compiledGraph, graphNodeThumbnails, nodes, selectedNodeId]);
   const graphConnectionStatus = useMemo(() => {
     const error = compiledGraph.diagnostics.find(
       (diagnostic) => diagnostic.severity === "error",
@@ -745,6 +747,19 @@ function StudioWorkspace() {
   const selectedNode = useMemo(
     () => nodes.find((node) => node.id === selectedNodeId) ?? null,
     [nodes, selectedNodeId],
+  );
+  const selectedMapChannel =
+    selectedNode?.data.kind === "textureMap"
+      ? selectedNode.data.values.mapChannel ?? null
+      : null;
+  const selectGraphNode = useCallback(
+    (node: MaterialGraphNode) => {
+      setSelectedNode(node.id);
+      if (node.data.kind === "textureMap" && node.data.values.mapChannel) {
+        setChannel(node.data.values.mapChannel);
+      }
+    },
+    [setChannel, setSelectedNode],
   );
 
   const filteredLibrary = useMemo(() => {
@@ -935,6 +950,23 @@ function StudioWorkspace() {
     }
   }, []);
 
+  const persistGraphImmediately = useCallback(() => {
+    const state = useMaterialStore.getState();
+    if (!state.hasActiveProject) return;
+    setSaveState("saving");
+    void saveProjectLocal(state.toProject())
+      .then(() => setSaveState("saved"))
+      .catch(() => setSaveState("error"));
+  }, []);
+
+  const connectGraphNodes = useCallback(
+    (connection: Connection) => {
+      onConnect(connection);
+      persistGraphImmediately();
+    },
+    [onConnect, persistGraphImmediately],
+  );
+
   const openViewer = useCallback(async () => {
     if (!useMaterialStore.getState().hasActiveProject) {
       window.location.assign("/viewer");
@@ -1063,7 +1095,7 @@ function StudioWorkspace() {
             {downloadingMaps ? <RotateCw className="spin" size={15} /> : <Download size={15} />}
             {downloadingMaps ? "Preparing mapsâ€¦" : "Download all maps"}
           </button>
-          <button className="button button--ghost header-save" onClick={() => void saveToLibrary()} disabled={!hasActiveProject || saveState === "saving"}>
+          <button className="button button--ghost header-save" onClick={() => void saveToLibrary()} disabled={!hasActiveProject}>
             <Save size={14} /> Save to Library
           </button>
           <button className="button button--primary" onClick={handleExport} disabled={!hasActiveProject || exporting}>
@@ -1266,10 +1298,11 @@ function StudioWorkspace() {
             nodeTypes={nodeTypes}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            onNodeClick={(_, node) => setSelectedNode(node.id)}
+            onConnect={connectGraphNodes}
+            onNodeClick={(_, node) => selectGraphNode(node)}
             onPaneClick={() => setSelectedNode(null)}
             onNodeDragStart={checkpoint}
+            onNodeDragStop={persistGraphImmediately}
             fitView
             fitViewOptions={{ padding: 0.22, minZoom: 0.55, maxZoom: 1.1 }}
             minZoom={0.28}
@@ -1343,7 +1376,10 @@ function StudioWorkspace() {
               <button
                 key={item.id}
                 className={`${preview.channel === item.id ? "is-active" : ""}${item.id !== "material" && !mapSettings[item.id].enabled ? " is-disabled" : ""}`}
-                onClick={() => setChannel(item.id)}
+                onClick={() => {
+                  setSelectedNode(null);
+                  setChannel(item.id);
+                }}
               >{item.label}</button>
             ))}
           </div>
@@ -1355,7 +1391,9 @@ function StudioWorkspace() {
           </div>
 
           <div className="inspector-panel">
-            {sourceTexture ? (
+            {workspaceView === "graph" && selectedNode && !selectedMapChannel ? (
+              <NodeInspector node={selectedNode} />
+            ) : sourceTexture ? (
               <DeferredTextureMapInspector
                 channel={preview.channel}
                 settings={mapSettings}

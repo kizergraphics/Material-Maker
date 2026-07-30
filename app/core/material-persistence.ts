@@ -212,11 +212,16 @@ function normalizeProject(
   } as MaterialProject;
 }
 
+export function prepareProjectForStorage(project: MaterialProject) {
+  return normalizeProject(projectSchema.parse(project), true);
+}
+
 export async function saveProjectLocal(project: MaterialProject) {
+  const storedProject = prepareProjectForStorage(project);
   const database = await openMaterialDatabase();
   return new Promise<void>((resolve, reject) => {
     const transaction = database.transaction(PROJECT_STORE, "readwrite");
-    transaction.objectStore(PROJECT_STORE).put(project);
+    transaction.objectStore(PROJECT_STORE).put(storedProject);
     transaction.oncomplete = () => {
       database.close();
       resolve();

@@ -113,7 +113,96 @@ const persistenceImport = await importTypeScriptModule(
   ]),
 );
 
-const { createMaterialPack, importMaterialPack } = persistenceImport.module;
+const {
+  createMaterialPack,
+  importMaterialPack,
+  prepareProjectForStorage,
+} = persistenceImport.module;
+
+test("local storage preparation preserves graph connections and node positions", () => {
+  const timestamp = "2026-07-30T15:00:00.000Z";
+  const project = {
+    schemaVersion: 4,
+    id: "stored-graph",
+    name: "Stored Graph",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    nodes: [
+      {
+        id: "color",
+        type: "materialNode",
+        position: { x: -312.5, y: 148.25 },
+        selected: true,
+        data: {
+          label: "Base color",
+          kind: "color",
+          category: "input",
+          version: 1,
+          values: { color: "#336699" },
+        },
+      },
+      {
+        id: "output",
+        type: "materialNode",
+        position: { x: 427.75, y: -96.5 },
+        data: {
+          label: "PBR material",
+          kind: "output",
+          category: "output",
+          version: 2,
+          values: {},
+        },
+      },
+    ],
+    edges: [
+      {
+        id: "color-output",
+        source: "color",
+        sourceHandle: "out",
+        target: "output",
+        targetHandle: "baseColor",
+        selected: true,
+      },
+    ],
+    preview: {
+      shape: "sphere",
+      channel: "material",
+      showGrid: true,
+      autoRotate: true,
+      tiled: true,
+    },
+    sourceTexture: null,
+    mapSettings: {
+      baseColor: { enabled: true, brightness: 0, contrast: 1, saturation: 1, hue: 0 },
+      height: { enabled: true, contrast: 1.18, bias: 0, blur: 1, invert: false },
+      normal: { enabled: true, strength: 2.2, detail: 1, invertY: false },
+      roughness: { enabled: true, base: 0.62, variation: 0.34, invert: false },
+      metallic: { enabled: true, base: 0, variation: 0, invert: false },
+      ao: { enabled: true, strength: 1.2, radius: 4, bias: 0 },
+    },
+    exportResolution: 1024,
+  };
+
+  const stored = prepareProjectForStorage(project);
+
+  assert.deepEqual(
+    stored.nodes.map(({ id, position }) => ({ id, position })),
+    [
+      { id: "color", position: { x: -312.5, y: 148.25 } },
+      { id: "output", position: { x: 427.75, y: -96.5 } },
+    ],
+  );
+  assert.deepEqual(stored.edges, [
+    {
+      id: "color-output",
+      source: "color",
+      target: "output",
+      sourceHandle: "out",
+      targetHandle: "baseColor",
+    },
+  ]);
+  assert.equal("selected" in stored.nodes[0], false);
+});
 
 test("legacy material packs migrate, normalize, export, and re-import", async () => {
   const timestamp = "2026-01-02T03:04:05.000Z";

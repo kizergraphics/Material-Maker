@@ -156,6 +156,8 @@ test("keeps persistence local and creates only the PBR output node", async () =>
   assert.match(persistence, /textures\/ambient-occlusion\.png/);
   assert.match(persistence, /deleteProjectLocal/);
   assert.match(persistence, /loadProjectsLocal/);
+  assert.match(persistence, /prepareProjectForStorage\(project\)/);
+  assert.match(persistence, /objectStore\(PROJECT_STORE\)\.put\(storedProject\)/);
   assert.match(persistence, /MAX_ZIP_TOTAL_BYTES/);
   assert.match(persistence, /Source images must be embedded/);
   assert.match(persistence, /migrateMaterialGraph\(value\.nodes,\s*value\.edges\)/);
@@ -204,6 +206,27 @@ test("keeps persistence local and creates only the PBR output node", async () =>
   assert.match(studio, /Graph is incomplete/);
   assert.match(studio, /compileMaterialGraph/);
   assert.match(studio, /validationIssues/);
+  assert.match(studio, /onConnect=\{connectGraphNodes\}/);
+  assert.match(studio, /onNodeDragStop=\{persistGraphImmediately\}/);
+  assert.doesNotMatch(
+    studio,
+    /header-save"[\s\S]{0,200}disabled=\{!hasActiveProject\s*\|\|\s*saveState\s*===\s*"saving"\}/,
+  );
+  assert.match(
+    studio,
+    /workspaceView\s*===\s*"graph"\s*&&\s*selectedNode\s*&&\s*!selectedMapChannel\s*\?\s*\([\s\S]*?<NodeInspector node=\{selectedNode\}\s*\/>[\s\S]*?\)\s*:\s*sourceTexture\s*\?/,
+  );
+  assert.match(studio, /selected:\s*node\.id\s*===\s*selectedNodeId/);
+  assert.match(
+    studio,
+    /node\.data\.kind\s*===\s*"textureMap"\s*&&\s*node\.data\.values\.mapChannel[\s\S]*?setChannel\(node\.data\.values\.mapChannel\)/,
+  );
+  assert.match(studio, /onNodeClick=\{\(_,\s*node\)\s*=>\s*selectGraphNode\(node\)\}/);
+  assert.match(studio, /onPaneClick=\{\(\)\s*=>\s*setSelectedNode\(null\)\}/);
+  assert.match(
+    studio,
+    /className=\{`\$\{preview\.channel[\s\S]*?onClick=\{\(\)\s*=>\s*\{\s*setSelectedNode\(null\);\s*setChannel\(item\.id\);/,
+  );
   assert.match(node, /definition\.outputs\.map/);
   assert.match(node, /className="material-node__output"/);
   assert.doesNotMatch(types, /Warm alloy|Micro pitting|Surface variation/);
