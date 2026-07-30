@@ -95,31 +95,15 @@ export function evaluateMaterial(
   const metallicSource = output
     ? compiledGraph.sourceFor(output.id, "metallic")
     : undefined;
+  const explicitHeightSource = output
+    ? compiledGraph.sourceFor(output.id, "height")
+    : undefined;
+  const ambientOcclusionSource = output
+    ? compiledGraph.sourceFor(output.id, "ao")
+    : undefined;
 
-  if (!baseColorSource) warnings.push("Base color is not connected.");
   if (!roughnessSource) warnings.push("Roughness is not connected.");
   if (!metallicSource) warnings.push("Metallic is not connected.");
-
-  const roughnessValue = clamp(
-    evaluateNode(
-      roughnessSource,
-      0.5,
-      0.5,
-      nodes,
-      compiledGraph,
-      new Set(),
-    )[0],
-  );
-  const metallicValue = clamp(
-    evaluateNode(
-      metallicSource,
-      0.5,
-      0.5,
-      nodes,
-      compiledGraph,
-      new Set(),
-    )[0],
-  );
 
   const albedo = new Uint8ClampedArray(size * size * 4);
   const heightMap = new Uint8ClampedArray(size * size * 4);
@@ -129,11 +113,33 @@ export function evaluateMaterial(
   const ambientOcclusion = new Uint8ClampedArray(size * size * 4);
   const step = 1 / size;
   const normalNode = normalSource ? nodes.get(normalSource) : undefined;
-  const heightSource =
+  const normalHeightSource =
     normalNode?.data.kind === "normal"
       ? compiledGraph.sourceFor(normalNode.id, "height")
-      : normalSource;
+      : undefined;
+  const heightSource = explicitHeightSource ?? normalHeightSource;
   const normalStrength = normalNode?.data.values.strength ?? 1;
+  const pixelCount = size * size;
+  let roughnessTotal = 0;
+  let metallicTotal = 0;
+  const sampleScalar = (
+    nodeId: string | undefined,
+    u: number,
+    v: number,
+    fallback: number,
+  ) =>
+    nodeId
+      ? clamp(
+          evaluateNode(
+            nodeId,
+            u,
+            v,
+            nodes,
+            compiledGraph,
+            new Set(),
+          )[0],
+        )
+      : fallback;
 
   for (let y = 0; y < size; y += 1) {
     for (let x = 0; x < size; x += 1) {
@@ -150,63 +156,141 @@ export function evaluateMaterial(
       );
       writePixel(albedo, offset, base);
 
-      const heightL = evaluateNode(
-        heightSource,
-        (u - step + 1) % 1,
-        v,
-        nodes,
-        compiledGraph,
-        new Set(),
-      )[0];
-      const heightR = evaluateNode(
-        heightSource,
-        (u + step) % 1,
-        v,
-        nodes,
-        compiledGraph,
-        new Set(),
-      )[0];
-      const heightD = evaluateNode(
-        heightSource,
-        u,
-        (v - step + 1) % 1,
-        nodes,
-        compiledGraph,
-        new Set(),
-      )[0];
-      const heightU = evaluateNode(
-        heightSource,
-        u,
-        (v + step) % 1,
-        nodes,
-        compiledGraph,
-        new Set(),
-      )[0];
-      const heightValue = evaluateNode(
-        heightSource,
-        u,
-        v,
-        nodes,
-        compiledGraph,
-        new Set(),
-      )[0];
-      let nx = (heightL - heightR) * normalStrength * 2;
-      let ny = (heightD - heightU) * normalStrength * 2;
-      let nz = 1;
-      const length = Math.hypot(nx, ny, nz) || 1;
-      nx /= length;
-      ny /= length;
-      nz /= length;
-      const occlusion = clamp(
-        1 - Math.max(0, (heightL + heightR + heightD + heightU) * 0.25 - heightValue) * 2.5,
-      );
+      const heightValue = sampleScalar(heightSource, u, v, 0.5);
       writePixel(heightMap, offset, [heightValue, heightValue, heightValue, 1]);
-      writePixel(normal, offset, [nx * 0.5 + 0.5, ny * 0.5 + 0.5, nz, 1]);
-      writePixel(roughness, offset, [roughnessValue, roughnessValue, roughnessValue, 1]);
-      writePixel(metallic, offset, [metallicValue, metallicValue, metallicValue, 1]);
-      writePixel(ambientOcclusion, offset, [occlusion, occlusion, occlusion, 1]);
+
+      let normalHeightL = 0.5;
+      let normalHeightR = 0.5;
+      let normalHeightD = 0.5;
+      let normalHeightU = 0.5;
+      if (normalHeightSource) {
+        normalHeightL = sampleScalar(
+          normalHeightSource,
+          (u - step + 1) % 1,
+          v,
+          0.5,
+        );
+        normalHeightR = sampleScalar(
+          normalHeightSource,
+          (u + step) % 1,
+          v,
+          0.5,
+        );
+        normalHeightD = sampleScalar(
+          normalHeightSource,
+          u,
+          (v - step + 1) % 1,
+          0.5,
+        );
+        normalHeightU = sampleScalar(
+          normalHeightSource,
+          u,
+          (v + step) % 1,
+          0.5,
+        );
+      }
+
+      if (normalHeightSource) {
+        let nx = (normalHeightL - normalHeightR) * normalStrength * 2;
+        let ny = (normalHeightD - normalHeightU) * normalStrength * 2;
+        let nz = 1;
+        const length = Math.hypot(nx, ny, nz) || 1;
+        nx /= length;
+        ny /= length;
+        nz /= length;
+        writePixel(normal, offset, [nx * 0.5 + 0.5, ny * 0.5 + 0.5, nz, 1]);
+      } else if (normalSource) {
+        writePixel(
+          normal,
+          offset,
+          evaluateNode(
+            normalSource,
+            u,
+            v,
+            nodes,
+            compiledGraph,
+            new Set(),
+          ),
+        );
+      } else {
+        writePixel(normal, offset, [0.5, 0.5, 1, 1]);
+      }
+
+      const roughnessSample = sampleScalar(roughnessSource, u, v, 0.6);
+      const metallicSample = sampleScalar(metallicSource, u, v, 0);
+      roughnessTotal += roughnessSample;
+      metallicTotal += metallicSample;
+      writePixel(
+        roughness,
+        offset,
+        [roughnessSample, roughnessSample, roughnessSample, 1],
+      );
+      writePixel(
+        metallic,
+        offset,
+        [metallicSample, metallicSample, metallicSample, 1],
+      );
+
+      let aoHeightL = 0.5;
+      let aoHeightR = 0.5;
+      let aoHeightD = 0.5;
+      let aoHeightU = 0.5;
+      if (!ambientOcclusionSource && heightSource) {
+        if (heightSource === normalHeightSource) {
+          aoHeightL = normalHeightL;
+          aoHeightR = normalHeightR;
+          aoHeightD = normalHeightD;
+          aoHeightU = normalHeightU;
+        } else {
+          aoHeightL = sampleScalar(
+            heightSource,
+            (u - step + 1) % 1,
+            v,
+            0.5,
+          );
+          aoHeightR = sampleScalar(
+            heightSource,
+            (u + step) % 1,
+            v,
+            0.5,
+          );
+          aoHeightD = sampleScalar(
+            heightSource,
+            u,
+            (v - step + 1) % 1,
+            0.5,
+          );
+          aoHeightU = sampleScalar(
+            heightSource,
+            u,
+            (v + step) % 1,
+            0.5,
+          );
+        }
+      }
+      const occlusion = ambientOcclusionSource
+        ? sampleScalar(ambientOcclusionSource, u, v, 1)
+        : heightSource
+          ? clamp(
+              1 -
+                Math.max(
+                  0,
+                  (aoHeightL + aoHeightR + aoHeightD + aoHeightU) * 0.25 -
+                    heightValue,
+                ) *
+                  2.5,
+            )
+          : 1;
+      writePixel(
+        ambientOcclusion,
+        offset,
+        [occlusion, occlusion, occlusion, 1],
+      );
     }
   }
+
+  const roughnessValue = roughnessTotal / pixelCount;
+  const metallicValue = metallicTotal / pixelCount;
 
   return {
     width: size,
