@@ -158,6 +158,9 @@ test("keeps persistence local and creates only the PBR output node", async () =>
   assert.match(persistence, /loadProjectsLocal/);
   assert.match(persistence, /MAX_ZIP_TOTAL_BYTES/);
   assert.match(persistence, /Source images must be embedded/);
+  assert.match(persistence, /migrateMaterialGraph\(value\.nodes,\s*value\.edges\)/);
+  assert.match(persistence, /version:\s*z\.number\(\)\.int\(\)\.positive\(\)/);
+  assert.match(types, /PROJECT_SCHEMA_VERSION\s*=\s*4/);
   assert.match(studio, /Save to Library/);
   assert.match(studio, /Place Map Lab maps/);
   assert.match(studio, /Nodes & recipes/);

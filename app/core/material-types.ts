@@ -14,7 +14,7 @@ export type {
   TextureMapChannel,
 } from "./material-node-registry";
 
-export const PROJECT_SCHEMA_VERSION = 3 as const;
+export const PROJECT_SCHEMA_VERSION = 4 as const;
 
 export type PreviewShape = "sphere" | "cube" | "plane";
 export type PreviewChannel = "material" | TextureMapChannel;
@@ -85,6 +85,7 @@ export type MaterialNodeData = Record<string, unknown> & {
   label: string;
   kind: MaterialNodeKind;
   category: MaterialNodeCategory;
+  version: number;
   values: NodeValueMap;
 };
 

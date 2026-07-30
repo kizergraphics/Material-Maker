@@ -19,6 +19,7 @@ import {
   openMaterialDatabase,
   PROJECT_STORE,
 } from "./local-database";
+import { migrateMaterialGraph } from "./material-project-migrations";
 import {
   DEFAULT_MAP_SETTINGS,
   PROJECT_SCHEMA_VERSION,
@@ -113,6 +114,7 @@ const graphNodeSchema = z.object({
     label: z.string().min(1).max(160),
     kind: z.enum(MATERIAL_NODE_KINDS),
     category: z.enum(MATERIAL_NODE_CATEGORIES),
+    version: z.number().int().positive().max(1000).optional(),
     values: nodeValuesSchema,
   }),
 });
@@ -151,7 +153,12 @@ const sourceTextureSchema = z.object({
 });
 
 const projectSchema = z.object({
-  schemaVersion: z.union([z.literal(1), z.literal(2), z.literal(PROJECT_SCHEMA_VERSION)]),
+  schemaVersion: z.union([
+    z.literal(1),
+    z.literal(2),
+    z.literal(3),
+    z.literal(PROJECT_SCHEMA_VERSION),
+  ]),
   id: z.string().min(1).max(128),
   name: z.string().min(1).max(160),
   createdAt: z.string(),
@@ -178,6 +185,7 @@ function normalizeProject(
   trustSourceFingerprint = false,
 ): MaterialProject {
   const supplied = value.mapSettings as Partial<typeof DEFAULT_MAP_SETTINGS> | undefined;
+  const migratedGraph = migrateMaterialGraph(value.nodes, value.edges);
   const sourceTexture = value.sourceTexture
     ? {
         ...value.sourceTexture,
@@ -189,6 +197,8 @@ function normalizeProject(
   return {
     ...value,
     schemaVersion: PROJECT_SCHEMA_VERSION,
+    nodes: migratedGraph.nodes,
+    edges: migratedGraph.edges,
     sourceTexture,
     mapSettings: {
       baseColor: { ...DEFAULT_MAP_SETTINGS.baseColor, ...supplied?.baseColor },
@@ -235,7 +245,13 @@ export async function loadProjectsLocal() {
       const projects = request.result
         .map((value) => projectSchema.safeParse(value))
         .filter((result) => result.success)
-        .map((result) => normalizeProject(result.data, true))
+        .flatMap((result) => {
+          try {
+            return [normalizeProject(result.data, true)];
+          } catch {
+            return [];
+          }
+        })
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
       resolve(projects);
     };

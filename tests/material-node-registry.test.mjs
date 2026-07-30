@@ -60,6 +60,55 @@ test("registry definitions have internally consistent ports and defaults", () =>
         `${definition.kind}.${parameter.key} has mismatched defaults`,
       );
     }
+
+    let expectedVersion = 1;
+    for (const migration of definition.migrations ?? []) {
+      assert.equal(
+        migration.fromVersion,
+        expectedVersion,
+        `${definition.kind} has a gap in its migration chain`,
+      );
+      assert.ok(migration.toVersion > migration.fromVersion);
+      assert.ok(migration.toVersion <= definition.version);
+      const parameterKeys = new Set(
+        definition.parameters.map(({ key }) => key),
+      );
+      for (const target of Object.values(
+        migration.parameterRenames ?? {},
+      )) {
+        assert.ok(
+          parameterKeys.has(target),
+          `${definition.kind} migration targets unknown parameter ${target}`,
+        );
+      }
+      const inputIds = new Set(definition.inputs.map(({ id }) => id));
+      for (const target of Object.values(migration.inputPortRenames ?? {})) {
+        assert.ok(
+          inputIds.has(target),
+          `${definition.kind} migration targets unknown input ${target}`,
+        );
+      }
+      const outputIds = new Set(definition.outputs.map(({ id }) => id));
+      for (const target of Object.values(migration.outputPortRenames ?? {})) {
+        assert.ok(
+          outputIds.has(target),
+          `${definition.kind} migration targets unknown output ${target}`,
+        );
+      }
+      expectedVersion = migration.toVersion;
+    }
+    assert.equal(
+      expectedVersion,
+      definition.version,
+      `${definition.kind} migrations do not reach the current version`,
+    );
+  }
+});
+
+test("new node data stores the current definition version", () => {
+  for (const definition of registry.MATERIAL_NODE_DEFINITIONS) {
+    const data = registry.createMaterialNodeData(definition.kind);
+    assert.equal(data.version, definition.version);
   }
 });
 

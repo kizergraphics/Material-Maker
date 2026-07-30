@@ -60,6 +60,7 @@ export function projectForGraphWorker(
           label: node.data.label,
           kind: node.data.kind,
           category: node.data.category,
+          version: node.data.version,
           values,
         },
       };

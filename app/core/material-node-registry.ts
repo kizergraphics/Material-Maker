@@ -87,6 +87,14 @@ export type MaterialNodeParameterDefinition =
       step: number;
     };
 
+export type MaterialNodeMigration = {
+  fromVersion: number;
+  toVersion: number;
+  parameterRenames?: Readonly<Record<string, NodeValueKey>>;
+  inputPortRenames?: Readonly<Record<string, string>>;
+  outputPortRenames?: Readonly<Record<string, string>>;
+};
+
 export type MaterialNodeEvaluationContext = {
   u: number;
   v: number;
@@ -105,6 +113,7 @@ export type MaterialNodeEvaluationResult =
 export type MaterialNodeDefinition = {
   kind: MaterialNodeKind;
   version: number;
+  migrations?: readonly MaterialNodeMigration[];
   label: string;
   category: MaterialNodeCategory;
   description: string;
@@ -212,7 +221,17 @@ export const MATERIAL_NODE_DEFINITIONS: readonly MaterialNodeDefinition[] = [
   },
   {
     kind: "levels",
-    version: 1,
+    version: 2,
+    migrations: [
+      {
+        fromVersion: 1,
+        toVersion: 2,
+        parameterRenames: {
+          min: "minimum",
+          max: "maximum",
+        },
+      },
+    ],
     label: "Levels",
     category: "filter",
     description: "Remap the tonal range of an input.",
@@ -269,7 +288,19 @@ export const MATERIAL_NODE_DEFINITIONS: readonly MaterialNodeDefinition[] = [
   },
   {
     kind: "channels",
-    version: 1,
+    version: 2,
+    migrations: [
+      {
+        fromVersion: 1,
+        toVersion: 2,
+        outputPortRenames: {
+          red: "r",
+          green: "g",
+          blue: "b",
+          alpha: "a",
+        },
+      },
+    ],
     label: "Split channels",
     category: "filter",
     description: "Split a color stream into independent scalar channels.",
@@ -336,7 +367,19 @@ export const MATERIAL_NODE_DEFINITIONS: readonly MaterialNodeDefinition[] = [
   },
   {
     kind: "normal",
-    version: 1,
+    version: 2,
+    migrations: [
+      {
+        fromVersion: 1,
+        toVersion: 2,
+        parameterRenames: {
+          intensity: "strength",
+        },
+        inputPortRenames: {
+          source: "height",
+        },
+      },
+    ],
     label: "Normal from height",
     category: "filter",
     description: "Derive a tangent-space normal map.",
@@ -366,7 +409,18 @@ export const MATERIAL_NODE_DEFINITIONS: readonly MaterialNodeDefinition[] = [
   },
   {
     kind: "output",
-    version: 1,
+    version: 2,
+    migrations: [
+      {
+        fromVersion: 1,
+        toVersion: 2,
+        inputPortRenames: {
+          albedo: "baseColor",
+          ambientOcclusion: "ao",
+          metalness: "metallic",
+        },
+      },
+    ],
     label: "PBR material",
     category: "output",
     description: "The final physically based material channels.",
@@ -400,6 +454,78 @@ export const NODE_LIBRARY = MATERIAL_NODE_DEFINITIONS.filter(
   (definition) => definition.userCreatable,
 );
 
+export type MigratedMaterialNodeState = {
+  version: number;
+  values: NodeValueMap;
+  inputPortRenames: Readonly<Record<string, string>>;
+  outputPortRenames: Readonly<Record<string, string>>;
+};
+
+function accumulatePortRenames(
+  accumulated: Record<string, string>,
+  renames: Readonly<Record<string, string>> | undefined,
+) {
+  if (!renames) return;
+  for (const [from, to] of Object.entries(renames)) {
+    for (const [original, current] of Object.entries(accumulated)) {
+      if (current === from) accumulated[original] = to;
+    }
+    accumulated[from] = to;
+  }
+}
+
+export function migrateMaterialNodeState(
+  kind: MaterialNodeKind,
+  storedVersion: number | undefined,
+  storedValues: Readonly<Record<string, unknown>>,
+): MigratedMaterialNodeState {
+  const definition = getMaterialNodeDefinition(kind);
+  let version = storedVersion ?? 1;
+  if (!Number.isInteger(version) || version < 1) {
+    throw new Error(`${definition.label} has an invalid node version.`);
+  }
+  if (version > definition.version) {
+    throw new Error(
+      `${definition.label} node version ${version} is newer than supported version ${definition.version}.`,
+    );
+  }
+
+  const values: Record<string, unknown> = { ...storedValues };
+  const inputPortRenames: Record<string, string> = {};
+  const outputPortRenames: Record<string, string> = {};
+  const migrationsByVersion = new Map(
+    (definition.migrations ?? []).map((migration) => [
+      migration.fromVersion,
+      migration,
+    ]),
+  );
+
+  while (version < definition.version) {
+    const migration = migrationsByVersion.get(version);
+    if (!migration || migration.toVersion <= version) {
+      throw new Error(
+        `${definition.label} cannot migrate from node version ${version}.`,
+      );
+    }
+    for (const [from, to] of Object.entries(
+      migration.parameterRenames ?? {},
+    )) {
+      if (!(to in values) && from in values) values[to] = values[from];
+      delete values[from];
+    }
+    accumulatePortRenames(inputPortRenames, migration.inputPortRenames);
+    accumulatePortRenames(outputPortRenames, migration.outputPortRenames);
+    version = migration.toVersion;
+  }
+
+  return {
+    version,
+    values: values as NodeValueMap,
+    inputPortRenames,
+    outputPortRenames,
+  };
+}
+
 export function createMaterialNodeData(
   kind: MaterialNodeKind,
   overrides: {
@@ -412,6 +538,7 @@ export function createMaterialNodeData(
     label: overrides.label ?? definition.label,
     kind,
     category: definition.category,
+    version: definition.version,
     values: {
       ...definition.defaultValues,
       ...overrides.values,
