@@ -81,6 +81,19 @@ test("registry definitions have internally consistent ports and defaults", () =>
           `${definition.kind} migration targets unknown parameter ${target}`,
         );
       }
+      for (const [key, value] of Object.entries(
+        migration.addedDefaults ?? {},
+      )) {
+        assert.ok(
+          Object.hasOwn(definition.defaultValues, key),
+          `${definition.kind} migration adds unknown default ${key}`,
+        );
+        assert.equal(
+          value,
+          definition.defaultValues[key],
+          `${definition.kind} migration default for ${key} is stale`,
+        );
+      }
       const inputIds = new Set(definition.inputs.map(({ id }) => id));
       for (const target of Object.values(migration.inputPortRenames ?? {})) {
         assert.ok(

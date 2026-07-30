@@ -129,7 +129,31 @@ test("canonical parameter values win over legacy aliases", () => {
   assert.deepEqual(migrated.nodes[0].data.values, {
     minimum: 0.35,
     maximum: 0.7,
+    gamma: 1.08,
   });
+});
+
+test("migration defaults fill missing values without replacing stored values", () => {
+  const migrated = migrateMaterialGraph(
+    [
+      storedNode("levels", "levels", { minimum: 0.42 }, 1),
+      storedNode("normal", "normal", {}, 1),
+    ],
+    [],
+  );
+
+  assert.deepEqual(migrated.nodes[0].data.values, {
+    minimum: 0.42,
+    maximum: 0.88,
+    gamma: 1.08,
+  });
+  assert.deepEqual(migrated.nodes[1].data.values, {
+    strength: 1.35,
+  });
+  assert.deepEqual(
+    migrateMaterialGraph(migrated.nodes, migrated.edges),
+    migrated,
+  );
 });
 
 test("future node versions fail with a clear compatibility error", () => {

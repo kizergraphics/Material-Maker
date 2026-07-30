@@ -91,6 +91,7 @@ export type MaterialNodeMigration = {
   fromVersion: number;
   toVersion: number;
   parameterRenames?: Readonly<Record<string, NodeValueKey>>;
+  addedDefaults?: Readonly<Partial<NodeValueMap>>;
   inputPortRenames?: Readonly<Record<string, string>>;
   outputPortRenames?: Readonly<Record<string, string>>;
 };
@@ -229,6 +230,11 @@ export const MATERIAL_NODE_DEFINITIONS: readonly MaterialNodeDefinition[] = [
         parameterRenames: {
           min: "minimum",
           max: "maximum",
+        },
+        addedDefaults: {
+          minimum: 0.18,
+          maximum: 0.88,
+          gamma: 1.08,
         },
       },
     ],
@@ -375,6 +381,9 @@ export const MATERIAL_NODE_DEFINITIONS: readonly MaterialNodeDefinition[] = [
         parameterRenames: {
           intensity: "strength",
         },
+        addedDefaults: {
+          strength: 1.35,
+        },
         inputPortRenames: {
           source: "height",
         },
@@ -510,8 +519,17 @@ export function migrateMaterialNodeState(
     for (const [from, to] of Object.entries(
       migration.parameterRenames ?? {},
     )) {
-      if (!(to in values) && from in values) values[to] = values[from];
+      if (!Object.hasOwn(values, to) && Object.hasOwn(values, from)) {
+        values[to] = values[from];
+      }
       delete values[from];
+    }
+    for (const [key, defaultValue] of Object.entries(
+      migration.addedDefaults ?? {},
+    )) {
+      if (!Object.hasOwn(values, key) && defaultValue !== undefined) {
+        values[key] = defaultValue;
+      }
     }
     accumulatePortRenames(inputPortRenames, migration.inputPortRenames);
     accumulatePortRenames(outputPortRenames, migration.outputPortRenames);
