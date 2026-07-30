@@ -8,6 +8,7 @@ import {
   getMaterialNodeDefinition,
   type MaterialNodeOutputMap,
   type MaterialNodeSample,
+  type TextureMapChannel,
 } from "./material-node-registry";
 
 type ColorValue = MaterialNodeSample;
@@ -30,6 +31,14 @@ const clamp = (value: number, min = 0, max = 1) =>
   Math.min(max, Math.max(min, value));
 
 const DEFAULT_SAMPLE: MaterialNodeSample = [0.5, 0.5, 0.5, 1];
+const TEXTURE_FALLBACKS: Record<TextureMapChannel, MaterialNodeSample> = {
+  baseColor: DEFAULT_SAMPLE,
+  height: DEFAULT_SAMPLE,
+  normal: [0.5, 0.5, 1, 1],
+  roughness: [0.6, 0.6, 0.6, 1],
+  metallic: [0, 0, 0, 1],
+  ao: [1, 1, 1, 1],
+};
 
 type EvaluatedGraphSample = ReadonlyMap<string, MaterialNodeOutputMap>;
 
@@ -98,6 +107,7 @@ function evaluatePlanAt(
   plan: MaterialEvaluationPlan,
   u: number,
   v: number,
+  textureInputs?: MaterialEvaluation,
 ): EvaluatedGraphSample {
   const evaluated = new Map<string, MaterialNodeOutputMap>();
 
@@ -115,6 +125,8 @@ function evaluatePlanAt(
           evaluated,
           plan.compiledGraph.inputSourceFor(nodeId, portId),
         ),
+      sampleTextureMap: (channel) =>
+        sampleTextureMap(textureInputs, channel, u, v),
     });
     evaluated.set(
       nodeId,
@@ -123,6 +135,48 @@ function evaluatePlanAt(
   }
 
   return evaluated;
+}
+
+function pixelsForTextureChannel(
+  evaluation: MaterialEvaluation,
+  channel: TextureMapChannel,
+) {
+  if (channel === "baseColor") return evaluation.albedo;
+  if (channel === "height") return evaluation.heightMap;
+  if (channel === "normal") return evaluation.normal;
+  if (channel === "roughness") return evaluation.roughness;
+  if (channel === "metallic") return evaluation.metallic;
+  return evaluation.ambientOcclusion;
+}
+
+function sampleTextureMap(
+  evaluation: MaterialEvaluation | undefined,
+  channel: TextureMapChannel,
+  u: number,
+  v: number,
+): MaterialNodeSample {
+  if (!evaluation?.width || !evaluation.height) {
+    return TEXTURE_FALLBACKS[channel];
+  }
+  const pixels = pixelsForTextureChannel(evaluation, channel);
+  const wrappedU = ((u % 1) + 1) % 1;
+  const wrappedV = ((v % 1) + 1) % 1;
+  const x = Math.min(
+    evaluation.width - 1,
+    Math.floor(wrappedU * evaluation.width),
+  );
+  const y = Math.min(
+    evaluation.height - 1,
+    Math.floor(wrappedV * evaluation.height),
+  );
+  const offset = (y * evaluation.width + x) * 4;
+  if (offset + 3 >= pixels.length) return TEXTURE_FALLBACKS[channel];
+  return [
+    pixels[offset] / 255,
+    pixels[offset + 1] / 255,
+    pixels[offset + 2] / 255,
+    pixels[offset + 3] / 255,
+  ];
 }
 
 function writePixel(
@@ -139,6 +193,7 @@ function writePixel(
 export function evaluateMaterial(
   project: Pick<MaterialProject, "nodes" | "edges">,
   size = 256,
+  textureInputs?: MaterialEvaluation,
 ): MaterialEvaluation {
   const compiledGraph = compileMaterialGraph(project);
   const nodes = new Map(compiledGraph.nodesById);
@@ -146,6 +201,15 @@ export function evaluateMaterial(
   const warnings = compiledGraph.diagnostics.map(
     (diagnostic) => diagnostic.message,
   );
+  if (
+    !textureInputs &&
+    [...compiledGraph.reachableNodeIds].some(
+      (nodeId) =>
+        compiledGraph.nodesById.get(nodeId)?.data.kind === "textureMap",
+    )
+  ) {
+    warnings.push("Generated texture inputs are unavailable.");
+  }
 
   const baseColorSource = output
     ? compiledGraph.inputSourceFor(output.id, "baseColor")
@@ -169,13 +233,16 @@ export function evaluateMaterial(
   if (!roughnessSource) warnings.push("Roughness is not connected.");
   if (!metallicSource) warnings.push("Metallic is not connected.");
 
-  const albedo = new Uint8ClampedArray(size * size * 4);
-  const heightMap = new Uint8ClampedArray(size * size * 4);
-  const normal = new Uint8ClampedArray(size * size * 4);
-  const roughness = new Uint8ClampedArray(size * size * 4);
-  const metallic = new Uint8ClampedArray(size * size * 4);
-  const ambientOcclusion = new Uint8ClampedArray(size * size * 4);
-  const step = 1 / size;
+  const width = textureInputs?.width ?? size;
+  const height = textureInputs?.height ?? size;
+  const albedo = new Uint8ClampedArray(width * height * 4);
+  const heightMap = new Uint8ClampedArray(width * height * 4);
+  const normal = new Uint8ClampedArray(width * height * 4);
+  const roughness = new Uint8ClampedArray(width * height * 4);
+  const metallic = new Uint8ClampedArray(width * height * 4);
+  const ambientOcclusion = new Uint8ClampedArray(width * height * 4);
+  const stepU = 1 / width;
+  const stepV = 1 / height;
   const normalNode = normalSource ? nodes.get(normalSource.nodeId) : undefined;
   const normalHeightSource =
     normalNode?.data.kind === "normal"
@@ -201,7 +268,7 @@ export function evaluateMaterial(
       ambientOcclusionSource ? undefined : heightSource,
     ].filter(isGraphSource),
   );
-  const pixelCount = size * size;
+  const pixelCount = width * height;
   let roughnessTotal = 0;
   let metallicTotal = 0;
   const sampleScalar = (
@@ -213,12 +280,12 @@ export function evaluateMaterial(
       ? clamp(sampleEvaluatedSource(evaluated, source)[0])
       : fallback;
 
-  for (let y = 0; y < size; y += 1) {
-    for (let x = 0; x < size; x += 1) {
-      const u = x / size;
-      const v = y / size;
-      const offset = (y * size + x) * 4;
-      const evaluated = evaluatePlanAt(materialPlan, u, v);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const u = x / width;
+      const v = y / height;
+      const offset = (y * width + x) * 4;
+      const evaluated = evaluatePlanAt(materialPlan, u, v, textureInputs);
       const base = sampleEvaluatedSource(evaluated, baseColorSource);
       writePixel(albedo, offset, base);
 
@@ -229,16 +296,26 @@ export function evaluateMaterial(
         Boolean(normalHeightSource) ||
         Boolean(!ambientOcclusionSource && heightSource);
       const left = needsNeighbours
-        ? evaluatePlanAt(neighbourPlan, (u - step + 1) % 1, v)
+        ? evaluatePlanAt(
+            neighbourPlan,
+            (u - stepU + 1) % 1,
+            v,
+            textureInputs,
+          )
         : undefined;
       const right = needsNeighbours
-        ? evaluatePlanAt(neighbourPlan, (u + step) % 1, v)
+        ? evaluatePlanAt(neighbourPlan, (u + stepU) % 1, v, textureInputs)
         : undefined;
       const down = needsNeighbours
-        ? evaluatePlanAt(neighbourPlan, u, (v - step + 1) % 1)
+        ? evaluatePlanAt(
+            neighbourPlan,
+            u,
+            (v - stepV + 1) % 1,
+            textureInputs,
+          )
         : undefined;
       const up = needsNeighbours
-        ? evaluatePlanAt(neighbourPlan, u, (v + step) % 1)
+        ? evaluatePlanAt(neighbourPlan, u, (v + stepV) % 1, textureInputs)
         : undefined;
       let normalHeightL = 0.5;
       let normalHeightR = 0.5;
@@ -334,8 +411,8 @@ export function evaluateMaterial(
   const metallicValue = metallicTotal / pixelCount;
 
   return {
-    width: size,
-    height: size,
+    width,
+    height,
     albedo,
     heightMap,
     normal,
@@ -352,6 +429,7 @@ export function evaluateNodeMap(
   project: Pick<MaterialProject, "nodes" | "edges">,
   nodeId: string,
   size = 64,
+  textureInputs?: MaterialEvaluation,
 ) {
   const compiledGraph = compileMaterialGraph(project);
   const nodes = new Map(compiledGraph.nodesById);
@@ -359,7 +437,7 @@ export function evaluateNodeMap(
   const pixels = new Uint8ClampedArray(size * size * 4);
   if (!node) return pixels;
   if (node.data.kind === "output") {
-    return evaluateMaterial(project, size).albedo;
+    return evaluateMaterial(project, size, textureInputs).albedo;
   }
 
   const step = 1 / size;
@@ -386,7 +464,7 @@ export function evaluateNodeMap(
       const v = y / size;
       const offset = (y * size + x) * 4;
       if (node.data.kind !== "normal") {
-        const evaluated = evaluatePlanAt(plan, u, v);
+        const evaluated = evaluatePlanAt(plan, u, v, textureInputs);
         writePixel(
           pixels,
           offset,
@@ -396,19 +474,19 @@ export function evaluateNodeMap(
       }
 
       const heightL = sampleEvaluatedSource(
-        evaluatePlanAt(plan, (u - step + 1) % 1, v),
+        evaluatePlanAt(plan, (u - step + 1) % 1, v, textureInputs),
         heightSource,
       )[0];
       const heightR = sampleEvaluatedSource(
-        evaluatePlanAt(plan, (u + step) % 1, v),
+        evaluatePlanAt(plan, (u + step) % 1, v, textureInputs),
         heightSource,
       )[0];
       const heightD = sampleEvaluatedSource(
-        evaluatePlanAt(plan, u, (v - step + 1) % 1),
+        evaluatePlanAt(plan, u, (v - step + 1) % 1, textureInputs),
         heightSource,
       )[0];
       const heightU = sampleEvaluatedSource(
-        evaluatePlanAt(plan, u, (v + step) % 1),
+        evaluatePlanAt(plan, u, (v + step) % 1, textureInputs),
         heightSource,
       )[0];
       let nx = (heightL - heightR) * normalStrength * 2;

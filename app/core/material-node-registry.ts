@@ -101,6 +101,7 @@ export type MaterialNodeEvaluationContext = {
   v: number;
   values: NodeValueMap;
   sampleInput: (portId: string) => MaterialNodeSample;
+  sampleTextureMap: (channel: TextureMapChannel) => MaterialNodeSample;
 };
 
 export type MaterialNodeOutputMap = Readonly<
@@ -131,6 +132,15 @@ export type MaterialNodeDefinition = {
 
 const clamp = (value: number, min = 0, max = 1) =>
   Math.min(max, Math.max(min, value));
+
+const textureMapFallbacks: Record<TextureMapChannel, MaterialNodeSample> = {
+  baseColor: [0.5, 0.5, 0.5, 1],
+  height: [0.5, 0.5, 0.5, 1],
+  normal: [0.5, 0.5, 1, 1],
+  roughness: [0.6, 0.6, 0.6, 1],
+  metallic: [0, 0, 0, 1],
+  ao: [1, 1, 1, 1],
+};
 
 function hexToColor(hex: string | undefined): MaterialNodeSample {
   if (!hex || !/^#[0-9a-f]{6}$/i.test(hex)) return [0.5, 0.5, 0.5, 1];
@@ -404,7 +414,16 @@ export const MATERIAL_NODE_DEFINITIONS: readonly MaterialNodeDefinition[] = [
   },
   {
     kind: "textureMap",
-    version: 1,
+    version: 2,
+    migrations: [
+      {
+        fromVersion: 1,
+        toVersion: 2,
+        addedDefaults: {
+          mapChannel: "baseColor",
+        },
+      },
+    ],
     label: "Generated map",
     category: "input",
     description: "A generated map linked to the current source texture.",
@@ -412,9 +431,15 @@ export const MATERIAL_NODE_DEFINITIONS: readonly MaterialNodeDefinition[] = [
     inputs: [],
     outputs: singleOutput("texture"),
     parameters: [],
-    defaultValues: { enabled: true },
+    defaultValues: { mapChannel: "baseColor", enabled: true },
     summarize: (values) =>
       `${values.mapChannel ?? "texture"}${values.enabled === false ? " · disabled" : " · generated"}`,
+    evaluate: ({ values, sampleTextureMap }) => {
+      const channel = values.mapChannel ?? "baseColor";
+      return values.enabled === false
+        ? textureMapFallbacks[channel]
+        : sampleTextureMap(channel);
+    },
   },
   {
     kind: "output",
@@ -462,6 +487,49 @@ export function getMaterialNodeDefinition(kind: MaterialNodeKind) {
 export const NODE_LIBRARY = MATERIAL_NODE_DEFINITIONS.filter(
   (definition) => definition.userCreatable,
 );
+
+export function normalizeMaterialNodeValues(
+  kind: MaterialNodeKind,
+  storedValues: Readonly<Record<string, unknown>>,
+): NodeValueMap {
+  const definition = getMaterialNodeDefinition(kind);
+  const normalized: NodeValueMap = {};
+
+  for (const parameter of definition.parameters) {
+    const value = storedValues[parameter.key];
+    if (parameter.control === "color") {
+      normalized.color =
+        typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value)
+          ? value
+          : parameter.defaultValue;
+      continue;
+    }
+
+    const number =
+      typeof value === "number" && Number.isFinite(value)
+        ? value
+        : parameter.defaultValue;
+    normalized[parameter.key] = clamp(number, parameter.min, parameter.max);
+  }
+
+  if (kind === "textureMap") {
+    const mapChannel = storedValues.mapChannel;
+    normalized.mapChannel =
+      typeof mapChannel === "string" &&
+      MATERIAL_TEXTURE_CHANNELS.includes(mapChannel as TextureMapChannel)
+        ? (mapChannel as TextureMapChannel)
+        : "baseColor";
+    normalized.enabled =
+      typeof storedValues.enabled === "boolean"
+        ? storedValues.enabled
+        : true;
+    if (typeof storedValues.thumbnail === "string") {
+      normalized.thumbnail = storedValues.thumbnail;
+    }
+  }
+
+  return normalized;
+}
 
 export type MigratedMaterialNodeState = {
   version: number;
@@ -538,7 +606,7 @@ export function migrateMaterialNodeState(
 
   return {
     version,
-    values: values as NodeValueMap,
+    values: normalizeMaterialNodeValues(kind, values),
     inputPortRenames,
     outputPortRenames,
   };
@@ -557,9 +625,9 @@ export function createMaterialNodeData(
     kind,
     category: definition.category,
     version: definition.version,
-    values: {
+    values: normalizeMaterialNodeValues(kind, {
       ...definition.defaultValues,
       ...overrides.values,
-    },
+    }),
   };
 }

@@ -150,3 +150,77 @@ test("multi-output nodes can branch distinct ports into material channels", () =
   assert.equal(result.metallicValue, 0.4);
   assert.deepEqual(result.warnings, []);
 });
+
+test("generated texture maps flow through the compiled graph at source dimensions", () => {
+  const nodes = [
+    node("generated-base", "textureMap", { mapChannel: "baseColor" }),
+    node("levels", "levels", { minimum: 0, maximum: 1, gamma: 1 }),
+    node("generated-height", "textureMap", { mapChannel: "height" }),
+    node("generated-normal", "textureMap", { mapChannel: "normal" }),
+    node("generated-rough", "textureMap", { mapChannel: "roughness" }),
+    node("generated-metal", "textureMap", { mapChannel: "metallic" }),
+    node("generated-ao", "textureMap", { mapChannel: "ao" }),
+    node("output", "output"),
+  ];
+  const edges = [
+    edge("base-levels", "generated-base", "out", "levels", "in"),
+    edge("base", "levels", "out", "output", "baseColor"),
+    edge("height", "generated-height", "out", "output", "height"),
+    edge("normal", "generated-normal", "out", "output", "normal"),
+    edge("rough", "generated-rough", "out", "output", "roughness"),
+    edge("metal", "generated-metal", "out", "output", "metallic"),
+    edge("ao", "generated-ao", "out", "output", "ao"),
+  ];
+  const textureInputs = {
+    width: 2,
+    height: 1,
+    albedo: new Uint8ClampedArray([
+      255, 0, 0, 255,
+      0, 255, 0, 255,
+    ]),
+    heightMap: new Uint8ClampedArray([
+      64, 64, 64, 255,
+      192, 192, 192, 255,
+    ]),
+    normal: new Uint8ClampedArray([
+      128, 128, 255, 255,
+      96, 160, 240, 255,
+    ]),
+    roughness: new Uint8ClampedArray([
+      32, 32, 32, 255,
+      224, 224, 224, 255,
+    ]),
+    metallic: new Uint8ClampedArray([
+      0, 0, 0, 255,
+      255, 255, 255, 255,
+    ]),
+    ambientOcclusion: new Uint8ClampedArray([
+      200, 200, 200, 255,
+      100, 100, 100, 255,
+    ]),
+    roughnessValue: 0.5,
+    metallicValue: 0.5,
+    warnings: [],
+  };
+
+  const result = evaluator.evaluateMaterial(
+    { nodes, edges },
+    8,
+    textureInputs,
+  );
+
+  assert.equal(result.width, 2);
+  assert.equal(result.height, 1);
+  assert.deepEqual(result.albedo, textureInputs.albedo);
+  assert.deepEqual(result.heightMap, textureInputs.heightMap);
+  assert.deepEqual(result.normal, textureInputs.normal);
+  assert.deepEqual(result.roughness, textureInputs.roughness);
+  assert.deepEqual(result.metallic, textureInputs.metallic);
+  assert.deepEqual(
+    result.ambientOcclusion,
+    textureInputs.ambientOcclusion,
+  );
+  assert.equal(result.roughnessValue, 128 / 255);
+  assert.equal(result.metallicValue, 0.5);
+  assert.deepEqual(result.warnings, []);
+});

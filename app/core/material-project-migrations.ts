@@ -1,4 +1,5 @@
 import {
+  getMaterialNodeDefinition,
   migrateMaterialNodeState,
   type MaterialNodeCategory,
   type MaterialNodeKind,
@@ -51,6 +52,7 @@ export function migrateMaterialGraph(
 } {
   const portRenamesByNodeId = new Map<string, NodePortRenames>();
   const nodes = storedNodes.map((node): MaterialGraphNode => {
+    const definition = getMaterialNodeDefinition(node.data.kind);
     const migrated = migrateMaterialNodeState(
       node.data.kind,
       node.data.version,
@@ -64,6 +66,7 @@ export function migrateMaterialGraph(
       type: "materialNode",
       data: {
         ...node.data,
+        category: definition.category,
         version: migrated.version,
         values: migrated.values,
       },

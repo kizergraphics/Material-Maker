@@ -72,6 +72,7 @@ function useGraphMaterialEvaluation(
   project: Pick<MaterialProject, "nodes" | "edges">,
   size: number,
   enabled: boolean,
+  textureInputs?: MaterialEvaluation,
 ) {
   const [evaluation, setEvaluation] =
     useState<MaterialEvaluation>(emptyGraphEvaluation);
@@ -114,6 +115,7 @@ function useGraphMaterialEvaluation(
       evaluateMaterial(
         { nodes: project.nodes, edges: project.edges },
         size,
+        textureInputs,
       );
 
     const evaluateInWorker = () => {
@@ -161,7 +163,9 @@ function useGraphMaterialEvaluation(
       setGenerating(true);
       timer = window.setTimeout(() => {
         const canUseWorker =
-          !workerDisabledRef.current && typeof Worker !== "undefined";
+          !textureInputs &&
+          !workerDisabledRef.current &&
+          typeof Worker !== "undefined";
         const request = canUseWorker
           ? Promise.resolve().then(evaluateInWorker).catch((reason) => {
               if (!isCurrent()) throw reason;
@@ -196,7 +200,7 @@ function useGraphMaterialEvaluation(
       window.clearTimeout(timer);
       terminateWorker();
     };
-  }, [enabled, project.edges, project.nodes, size]);
+  }, [enabled, project.edges, project.nodes, size, textureInputs]);
 
   return { evaluation, isGenerating: enabled && isGenerating, error };
 }
@@ -225,8 +229,10 @@ export function useMaterialEvaluation(
     maxEdge,
     !project.sourceTexture,
   );
-  const [evaluation, setEvaluation] =
-    useState<MaterialEvaluation>(emptyGraphEvaluation);
+  const [sourceEvaluationState, setSourceEvaluationState] = useState<{
+    source: NonNullable<MaterialProject["sourceTexture"]>;
+    evaluation: MaterialEvaluation;
+  } | null>(null);
   const [isGenerating, setGenerating] = useState(
     Boolean(project.sourceTexture),
   );
@@ -240,6 +246,23 @@ export function useMaterialEvaluation(
   const generationIdRef = useRef(0);
   const workerRef = useRef<GenerationWorkerState | null>(null);
   const workerDisabledRef = useRef(false);
+  const hasTextureMapNodes = project.nodes.some(
+    (node) => node.data.kind === "textureMap",
+  );
+  const sourceEvaluationReady =
+    sourceEvaluationState?.source === project.sourceTexture;
+  const evaluation =
+    sourceEvaluationState?.evaluation ?? emptyGraphEvaluation;
+  const sourceGraphResult = useGraphMaterialEvaluation(
+    { nodes: project.nodes, edges: project.edges },
+    maxEdge,
+    Boolean(
+      project.sourceTexture &&
+        hasTextureMapNodes &&
+        sourceEvaluationReady,
+    ),
+    sourceEvaluationReady ? evaluation : undefined,
+  );
 
   useEffect(
     () => () => {
@@ -461,7 +484,10 @@ export function useMaterialEvaluation(
       };
       frame = window.requestAnimationFrame(() => {
         if (!isCurrent()) return;
-        setEvaluation(completed.evaluation);
+        setSourceEvaluationState({
+          source,
+          evaluation: completed.evaluation,
+        });
         setGenerating(false);
       });
       return () => {
@@ -514,7 +540,10 @@ export function useMaterialEvaluation(
           maxEdge,
           nextEvaluation,
         );
-        setEvaluation(nextEvaluation);
+        setSourceEvaluationState({
+          source,
+          evaluation: nextEvaluation,
+        });
         setError(null);
       } catch (reason) {
         if (!isCurrent()) return;
@@ -563,7 +592,10 @@ export function useMaterialEvaluation(
               settings: project.mapSettings,
               evaluation: interactiveEvaluation,
             };
-            setEvaluation(interactiveEvaluation);
+            setSourceEvaluationState({
+              source,
+              evaluation: interactiveEvaluation,
+            });
             setError(null);
 
             if (interactiveEdge === maxEdge) {
@@ -620,7 +652,10 @@ export function useMaterialEvaluation(
         if (maxEdge <= INTERACTIVE_PREVIEW_EDGE) {
           interactiveRef.current = cachedGeneration;
         }
-        setEvaluation(cachedEvaluation);
+        setSourceEvaluationState({
+          source,
+          evaluation: cachedEvaluation,
+        });
         setError(null);
         setGenerating(false);
       });
@@ -635,7 +670,23 @@ export function useMaterialEvaluation(
     };
   }, [maxEdge, project.mapSettings, project.sourceTexture]);
 
-  return project.sourceTexture
-    ? { evaluation, isGenerating, error }
-    : graphResult;
+  if (!project.sourceTexture) {
+    return { ...graphResult, sourceEvaluation: undefined };
+  }
+
+  if (hasTextureMapNodes && sourceEvaluationReady) {
+    return {
+      evaluation: sourceGraphResult.evaluation,
+      sourceEvaluation: evaluation,
+      isGenerating: isGenerating || sourceGraphResult.isGenerating,
+      error: error ?? sourceGraphResult.error,
+    };
+  }
+
+  return {
+    evaluation,
+    sourceEvaluation: evaluation,
+    isGenerating,
+    error,
+  };
 }

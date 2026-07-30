@@ -125,6 +125,42 @@ test("new node data stores the current definition version", () => {
   }
 });
 
+test("node values normalize by definition and discard unsupported fields", () => {
+  assert.deepEqual(
+    registry.normalizeMaterialNodeValues("noise", {
+      scale: 999,
+      contrast: -4,
+      seed: "not-a-number",
+      opacity: 0.25,
+    }),
+    {
+      scale: 32,
+      contrast: 0,
+      seed: 14,
+    },
+  );
+  assert.deepEqual(
+    registry.normalizeMaterialNodeValues("color", {
+      color: "red",
+      value: 0.2,
+    }),
+    { color: "#76706a" },
+  );
+  assert.deepEqual(
+    registry.normalizeMaterialNodeValues("textureMap", {
+      mapChannel: "unsupported",
+      enabled: "yes",
+      thumbnail: "data:image/png;base64,AA==",
+      seed: 4,
+    }),
+    {
+      mapChannel: "baseColor",
+      enabled: true,
+      thumbnail: "data:image/png;base64,AA==",
+    },
+  );
+});
+
 test("registry evaluators preserve existing deterministic sampling behavior", () => {
   const color = registry.getMaterialNodeDefinition("color");
   assert.deepEqual(
@@ -171,5 +207,18 @@ test("registry evaluators preserve existing deterministic sampling behavior", ()
       b: [0.3, 0.3, 0.3, 1],
       a: [0.4, 0.4, 0.4, 1],
     },
+  );
+
+  const textureMap = registry.getMaterialNodeDefinition("textureMap");
+  assert.deepEqual(
+    textureMap.evaluate({
+      u: 0.25,
+      v: 0.75,
+      values: { mapChannel: "roughness", enabled: true },
+      sampleInput: () => [0, 0, 0, 1],
+      sampleTextureMap: (channel) =>
+        channel === "roughness" ? [0.2, 0.2, 0.2, 1] : [0, 0, 0, 1],
+    }),
+    [0.2, 0.2, 0.2, 1],
   );
 });

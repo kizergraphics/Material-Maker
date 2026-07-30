@@ -156,6 +156,49 @@ test("migration defaults fill missing values without replacing stored values", (
   );
 });
 
+test("migration normalizes each node's values and repairs registry metadata", () => {
+  const invalidNoise = storedNode(
+    "noise",
+    "noise",
+    {
+      scale: 80,
+      contrast: -2,
+      seed: "invalid",
+      opacity: 0.4,
+    },
+    1,
+  );
+  invalidNoise.data.category = "blend";
+  const invalidTexture = storedNode(
+    "texture",
+    "textureMap",
+    {
+      mapChannel: "invalid",
+      enabled: "yes",
+      thumbnail: "data:image/png;base64,AA==",
+      value: 0.25,
+    },
+    1,
+  );
+
+  const migrated = migrateMaterialGraph(
+    [invalidNoise, invalidTexture],
+    [],
+  );
+
+  assert.equal(migrated.nodes[0].data.category, "generator");
+  assert.deepEqual(migrated.nodes[0].data.values, {
+    scale: 32,
+    contrast: 0,
+    seed: 14,
+  });
+  assert.deepEqual(migrated.nodes[1].data.values, {
+    mapChannel: "baseColor",
+    enabled: true,
+    thumbnail: "data:image/png;base64,AA==",
+  });
+});
+
 test("future node versions fail with a clear compatibility error", () => {
   assert.throws(
     () =>

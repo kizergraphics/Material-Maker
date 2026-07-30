@@ -329,6 +329,15 @@ function samePackInputs(
   );
 }
 
+function evaluateGeneratedTextureGraph(
+  project: MaterialProject,
+  generated: MaterialEvaluation,
+) {
+  return project.nodes.some((node) => node.data.kind === "textureMap")
+    ? evaluateMaterial(project, project.exportResolution, generated)
+    : generated;
+}
+
 function getProjectEvaluationCache(project: MaterialProject) {
   if (
     projectEvaluationCache &&
@@ -343,19 +352,22 @@ function getProjectEvaluationCache(project: MaterialProject) {
         project.mapSettings,
         project.exportResolution,
       ).then(async (cached) => {
-        if (cached) return cached;
-        const generated = await evaluateSourceTexture(
-          project.sourceTexture!,
-          project.mapSettings,
-          project.exportResolution,
-        );
-        void storePersistentGeneratedMaps(
-          project.sourceTexture!,
-          project.mapSettings,
-          project.exportResolution,
-          generated,
-        );
-        return generated;
+        const generated =
+          cached ??
+          (await evaluateSourceTexture(
+            project.sourceTexture!,
+            project.mapSettings,
+            project.exportResolution,
+          ));
+        if (!cached) {
+          void storePersistentGeneratedMaps(
+            project.sourceTexture!,
+            project.mapSettings,
+            project.exportResolution,
+            generated,
+          );
+        }
+        return evaluateGeneratedTextureGraph(project, generated);
       })
     : Promise.resolve(evaluateMaterial(project, project.exportResolution));
   const cache = {

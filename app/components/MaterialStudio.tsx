@@ -587,10 +587,16 @@ function StudioWorkspace() {
   const resetMapSettings = useMaterialStore((state) => state.resetMapSettings);
   const setExportResolution = useMaterialStore((state) => state.setExportResolution);
 
-  const { evaluation, isGenerating, error: generationError } = useMaterialEvaluation(
+  const {
+    evaluation,
+    sourceEvaluation,
+    isGenerating,
+    error: generationError,
+  } = useMaterialEvaluation(
     { nodes, edges, sourceTexture, mapSettings },
     256,
   );
+  const mapLabEvaluation = sourceEvaluation ?? evaluation;
   const compiledGraph = useMemo(
     () => compileMaterialGraph({ nodes, edges }),
     [edges, nodes],
@@ -652,7 +658,7 @@ function StudioWorkspace() {
       const plan = planGraphNodeThumbnails(
         nodes,
         edges,
-        evaluation,
+        mapLabEvaluation,
         graphThumbnailCacheRef.current,
       );
       if (!plan.pending.length) {
@@ -666,11 +672,16 @@ function StudioWorkspace() {
           Object.fromEntries(
             nodeIds.map((nodeId) => [
               nodeId,
-              evaluateNodeMap({ nodes, edges }, nodeId, 64),
+              evaluateNodeMap(
+                { nodes, edges },
+                nodeId,
+                64,
+                sourceEvaluation,
+              ),
             ]),
           );
         let request: Promise<Record<string, Uint8ClampedArray>>;
-        if (typeof Worker === "undefined") {
+        if (typeof Worker === "undefined" || sourceEvaluation) {
           request = Promise.resolve(evaluateOnMainThread());
         } else {
           request = Promise.resolve()
@@ -723,7 +734,13 @@ function StudioWorkspace() {
       window.clearTimeout(timer);
       worker?.terminate();
     };
-  }, [edges, evaluation, nodes, workspaceView]);
+  }, [
+    edges,
+    mapLabEvaluation,
+    nodes,
+    sourceEvaluation,
+    workspaceView,
+  ]);
 
   const selectedNode = useMemo(
     () => nodes.find((node) => node.id === selectedNodeId) ?? null,
@@ -966,11 +983,11 @@ function StudioWorkspace() {
   }, [openAlbedoFile]);
 
   const sendMapsToGraph = useCallback(() => {
-    syncGeneratedMapsToGraph(createMapThumbnails(evaluation));
+    syncGeneratedMapsToGraph(createMapThumbnails(mapLabEvaluation));
     setWorkspaceView("graph");
     setNotice("Generated maps added and connected in Graph Lab");
     window.setTimeout(() => reactFlow.fitView({ padding: 0.2, duration: 280 }), 0);
-  }, [evaluation, reactFlow, syncGeneratedMapsToGraph]);
+  }, [mapLabEvaluation, reactFlow, syncGeneratedMapsToGraph]);
 
   const addLibraryNode = (kind: MaterialNodeKind) => {
     const index = nodes.length;
@@ -1229,7 +1246,7 @@ function StudioWorkspace() {
         {hasActiveProject ? <>
         {workspaceView === "maps" && sourceTexture ? (
           <DeferredTextureMapWorkbench
-            evaluation={evaluation}
+            evaluation={mapLabEvaluation}
             source={sourceTexture}
             settings={mapSettings}
             selectedChannel={preview.channel}
@@ -1311,7 +1328,9 @@ function StudioWorkspace() {
           </div>
 
           <DeferredMaterialPreview
-            evaluation={evaluation}
+            evaluation={
+              workspaceView === "maps" ? mapLabEvaluation : evaluation
+            }
             shape={preview.shape}
             channel={preview.channel}
             showGrid={preview.showGrid}
@@ -1341,7 +1360,7 @@ function StudioWorkspace() {
                 channel={preview.channel}
                 settings={mapSettings}
                 exportResolution={exportResolution}
-                evaluation={evaluation}
+                evaluation={mapLabEvaluation}
                 projectName={projectName}
                 isGenerating={isGenerating}
                 onUpdate={updateMapSettings}
