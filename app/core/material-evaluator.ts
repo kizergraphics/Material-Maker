@@ -1,10 +1,12 @@
 import {
   compileMaterialGraph,
   type CompiledMaterialGraph,
+  type MaterialGraphSource,
 } from "./material-graph-compiler";
-import type { MaterialGraphNode, MaterialProject } from "./material-types";
+import type { MaterialProject } from "./material-types";
 import {
   getMaterialNodeDefinition,
+  type MaterialNodeOutputMap,
   type MaterialNodeSample,
 } from "./material-node-registry";
 
@@ -27,38 +29,100 @@ export interface MaterialEvaluation {
 const clamp = (value: number, min = 0, max = 1) =>
   Math.min(max, Math.max(min, value));
 
-function evaluateNode(
-  nodeId: string | undefined,
+const DEFAULT_SAMPLE: MaterialNodeSample = [0.5, 0.5, 0.5, 1];
+
+type EvaluatedGraphSample = ReadonlyMap<string, MaterialNodeOutputMap>;
+
+type MaterialEvaluationPlan = {
+  compiledGraph: CompiledMaterialGraph;
+  nodeIds: readonly string[];
+};
+
+function isGraphSource(
+  source: MaterialGraphSource | undefined,
+): source is MaterialGraphSource {
+  return source !== undefined;
+}
+
+function createEvaluationPlan(
+  compiledGraph: CompiledMaterialGraph,
+  requestedSources: readonly MaterialGraphSource[],
+): MaterialEvaluationPlan {
+  const requiredNodeIds = new Set<string>();
+  const pending = requestedSources.map(({ nodeId }) => nodeId);
+
+  while (pending.length) {
+    const nodeId = pending.pop();
+    if (!nodeId || requiredNodeIds.has(nodeId)) continue;
+    requiredNodeIds.add(nodeId);
+    const node = compiledGraph.nodesById.get(nodeId);
+    if (!node) continue;
+    const definition = getMaterialNodeDefinition(node.data.kind);
+    for (const input of definition.inputs) {
+      const source = compiledGraph.inputSourceFor(nodeId, input.id);
+      if (source) pending.push(source.nodeId);
+    }
+  }
+
+  return {
+    compiledGraph,
+    nodeIds: compiledGraph.topologicalNodeIds.filter((nodeId) =>
+      requiredNodeIds.has(nodeId),
+    ),
+  };
+}
+
+function sampleEvaluatedSource(
+  evaluated: EvaluatedGraphSample,
+  source: MaterialGraphSource | undefined,
+  fallback: MaterialNodeSample = DEFAULT_SAMPLE,
+): MaterialNodeSample {
+  if (!source) return fallback;
+  return evaluated.get(source.nodeId)?.[source.portId] ?? fallback;
+}
+
+function normalizeNodeOutputs(
+  outputPortId: string | undefined,
+  result: MaterialNodeSample | MaterialNodeOutputMap | undefined,
+): MaterialNodeOutputMap {
+  if (!result) return {};
+  if (Array.isArray(result)) {
+    return outputPortId
+      ? { [outputPortId]: result as MaterialNodeSample }
+      : {};
+  }
+  return result as MaterialNodeOutputMap;
+}
+
+function evaluatePlanAt(
+  plan: MaterialEvaluationPlan,
   u: number,
   v: number,
-  nodes: Map<string, MaterialGraphNode>,
-  compiledGraph: CompiledMaterialGraph,
-  stack: Set<string>,
-): ColorValue {
-  if (!nodeId) return [0.5, 0.5, 0.5, 1];
-  const node = nodes.get(nodeId);
-  if (!node || stack.has(nodeId)) return [1, 0.08, 0.35, 1];
+): EvaluatedGraphSample {
+  const evaluated = new Map<string, MaterialNodeOutputMap>();
 
-  stack.add(nodeId);
-  const values = node.data.values;
-  const definition = getMaterialNodeDefinition(node.data.kind);
-  const result = definition.evaluate?.({
-    u,
-    v,
-    values,
-    sampleInput: (portId) =>
-      evaluateNode(
-        compiledGraph.sourceFor(node.id, portId),
-        u,
-        v,
-        nodes,
-        compiledGraph,
-        stack,
-      ),
-  }) ?? [0.5, 0.5, 0.5, 1];
+  for (const nodeId of plan.nodeIds) {
+    const node = plan.compiledGraph.nodesById.get(nodeId);
+    if (!node) continue;
+    const definition = getMaterialNodeDefinition(node.data.kind);
+    if (!definition.evaluate || !definition.outputs.length) continue;
+    const result = definition.evaluate({
+      u,
+      v,
+      values: node.data.values,
+      sampleInput: (portId) =>
+        sampleEvaluatedSource(
+          evaluated,
+          plan.compiledGraph.inputSourceFor(nodeId, portId),
+        ),
+    });
+    evaluated.set(
+      nodeId,
+      normalizeNodeOutputs(definition.outputs[0]?.id, result),
+    );
+  }
 
-  stack.delete(nodeId);
-  return result;
+  return evaluated;
 }
 
 function writePixel(
@@ -84,22 +148,22 @@ export function evaluateMaterial(
   );
 
   const baseColorSource = output
-    ? compiledGraph.sourceFor(output.id, "baseColor")
+    ? compiledGraph.inputSourceFor(output.id, "baseColor")
     : undefined;
   const normalSource = output
-    ? compiledGraph.sourceFor(output.id, "normal")
+    ? compiledGraph.inputSourceFor(output.id, "normal")
     : undefined;
   const roughnessSource = output
-    ? compiledGraph.sourceFor(output.id, "roughness")
+    ? compiledGraph.inputSourceFor(output.id, "roughness")
     : undefined;
   const metallicSource = output
-    ? compiledGraph.sourceFor(output.id, "metallic")
+    ? compiledGraph.inputSourceFor(output.id, "metallic")
     : undefined;
   const explicitHeightSource = output
-    ? compiledGraph.sourceFor(output.id, "height")
+    ? compiledGraph.inputSourceFor(output.id, "height")
     : undefined;
   const ambientOcclusionSource = output
-    ? compiledGraph.sourceFor(output.id, "ao")
+    ? compiledGraph.inputSourceFor(output.id, "ao")
     : undefined;
 
   if (!roughnessSource) warnings.push("Roughness is not connected.");
@@ -112,33 +176,41 @@ export function evaluateMaterial(
   const metallic = new Uint8ClampedArray(size * size * 4);
   const ambientOcclusion = new Uint8ClampedArray(size * size * 4);
   const step = 1 / size;
-  const normalNode = normalSource ? nodes.get(normalSource) : undefined;
+  const normalNode = normalSource ? nodes.get(normalSource.nodeId) : undefined;
   const normalHeightSource =
     normalNode?.data.kind === "normal"
-      ? compiledGraph.sourceFor(normalNode.id, "height")
+      ? compiledGraph.inputSourceFor(normalNode.id, "height")
       : undefined;
   const heightSource = explicitHeightSource ?? normalHeightSource;
   const normalStrength = normalNode?.data.values.strength ?? 1;
+  const materialPlan = createEvaluationPlan(
+    compiledGraph,
+    [
+      baseColorSource,
+      normalSource,
+      roughnessSource,
+      metallicSource,
+      heightSource,
+      ambientOcclusionSource,
+    ].filter(isGraphSource),
+  );
+  const neighbourPlan = createEvaluationPlan(
+    compiledGraph,
+    [
+      normalHeightSource,
+      ambientOcclusionSource ? undefined : heightSource,
+    ].filter(isGraphSource),
+  );
   const pixelCount = size * size;
   let roughnessTotal = 0;
   let metallicTotal = 0;
   const sampleScalar = (
-    nodeId: string | undefined,
-    u: number,
-    v: number,
+    evaluated: EvaluatedGraphSample,
+    source: MaterialGraphSource | undefined,
     fallback: number,
   ) =>
-    nodeId
-      ? clamp(
-          evaluateNode(
-            nodeId,
-            u,
-            v,
-            nodes,
-            compiledGraph,
-            new Set(),
-          )[0],
-        )
+    source
+      ? clamp(sampleEvaluatedSource(evaluated, source)[0])
       : fallback;
 
   for (let y = 0; y < size; y += 1) {
@@ -146,48 +218,37 @@ export function evaluateMaterial(
       const u = x / size;
       const v = y / size;
       const offset = (y * size + x) * 4;
-      const base = evaluateNode(
-        baseColorSource,
-        u,
-        v,
-        nodes,
-        compiledGraph,
-        new Set(),
-      );
+      const evaluated = evaluatePlanAt(materialPlan, u, v);
+      const base = sampleEvaluatedSource(evaluated, baseColorSource);
       writePixel(albedo, offset, base);
 
-      const heightValue = sampleScalar(heightSource, u, v, 0.5);
+      const heightValue = sampleScalar(evaluated, heightSource, 0.5);
       writePixel(heightMap, offset, [heightValue, heightValue, heightValue, 1]);
 
+      const needsNeighbours =
+        Boolean(normalHeightSource) ||
+        Boolean(!ambientOcclusionSource && heightSource);
+      const left = needsNeighbours
+        ? evaluatePlanAt(neighbourPlan, (u - step + 1) % 1, v)
+        : undefined;
+      const right = needsNeighbours
+        ? evaluatePlanAt(neighbourPlan, (u + step) % 1, v)
+        : undefined;
+      const down = needsNeighbours
+        ? evaluatePlanAt(neighbourPlan, u, (v - step + 1) % 1)
+        : undefined;
+      const up = needsNeighbours
+        ? evaluatePlanAt(neighbourPlan, u, (v + step) % 1)
+        : undefined;
       let normalHeightL = 0.5;
       let normalHeightR = 0.5;
       let normalHeightD = 0.5;
       let normalHeightU = 0.5;
-      if (normalHeightSource) {
-        normalHeightL = sampleScalar(
-          normalHeightSource,
-          (u - step + 1) % 1,
-          v,
-          0.5,
-        );
-        normalHeightR = sampleScalar(
-          normalHeightSource,
-          (u + step) % 1,
-          v,
-          0.5,
-        );
-        normalHeightD = sampleScalar(
-          normalHeightSource,
-          u,
-          (v - step + 1) % 1,
-          0.5,
-        );
-        normalHeightU = sampleScalar(
-          normalHeightSource,
-          u,
-          (v + step) % 1,
-          0.5,
-        );
+      if (normalHeightSource && left && right && down && up) {
+        normalHeightL = sampleScalar(left, normalHeightSource, 0.5);
+        normalHeightR = sampleScalar(right, normalHeightSource, 0.5);
+        normalHeightD = sampleScalar(down, normalHeightSource, 0.5);
+        normalHeightU = sampleScalar(up, normalHeightSource, 0.5);
       }
 
       if (normalHeightSource) {
@@ -203,21 +264,14 @@ export function evaluateMaterial(
         writePixel(
           normal,
           offset,
-          evaluateNode(
-            normalSource,
-            u,
-            v,
-            nodes,
-            compiledGraph,
-            new Set(),
-          ),
+          sampleEvaluatedSource(evaluated, normalSource),
         );
       } else {
         writePixel(normal, offset, [0.5, 0.5, 1, 1]);
       }
 
-      const roughnessSample = sampleScalar(roughnessSource, u, v, 0.6);
-      const metallicSample = sampleScalar(metallicSource, u, v, 0);
+      const roughnessSample = sampleScalar(evaluated, roughnessSource, 0.6);
+      const metallicSample = sampleScalar(evaluated, metallicSource, 0);
       roughnessTotal += roughnessSample;
       metallicTotal += metallicSample;
       writePixel(
@@ -235,41 +289,28 @@ export function evaluateMaterial(
       let aoHeightR = 0.5;
       let aoHeightD = 0.5;
       let aoHeightU = 0.5;
-      if (!ambientOcclusionSource && heightSource) {
+      if (
+        !ambientOcclusionSource &&
+        heightSource &&
+        left &&
+        right &&
+        down &&
+        up
+      ) {
         if (heightSource === normalHeightSource) {
           aoHeightL = normalHeightL;
           aoHeightR = normalHeightR;
           aoHeightD = normalHeightD;
           aoHeightU = normalHeightU;
         } else {
-          aoHeightL = sampleScalar(
-            heightSource,
-            (u - step + 1) % 1,
-            v,
-            0.5,
-          );
-          aoHeightR = sampleScalar(
-            heightSource,
-            (u + step) % 1,
-            v,
-            0.5,
-          );
-          aoHeightD = sampleScalar(
-            heightSource,
-            u,
-            (v - step + 1) % 1,
-            0.5,
-          );
-          aoHeightU = sampleScalar(
-            heightSource,
-            u,
-            (v + step) % 1,
-            0.5,
-          );
+          aoHeightL = sampleScalar(left, heightSource, 0.5);
+          aoHeightR = sampleScalar(right, heightSource, 0.5);
+          aoHeightD = sampleScalar(down, heightSource, 0.5);
+          aoHeightU = sampleScalar(up, heightSource, 0.5);
         }
       }
       const occlusion = ambientOcclusionSource
-        ? sampleScalar(ambientOcclusionSource, u, v, 1)
+        ? sampleScalar(evaluated, ambientOcclusionSource, 1)
         : heightSource
           ? clamp(
               1 -
@@ -322,10 +363,22 @@ export function evaluateNodeMap(
   }
 
   const step = 1 / size;
+  const definition = getMaterialNodeDefinition(node.data.kind);
+  const outputPort = definition.outputs[0];
+  if (!outputPort) return pixels;
+  const nodeSource: MaterialGraphSource = {
+    nodeId: node.id,
+    portId: outputPort.id,
+    type: outputPort.type,
+  };
   const heightSource = node.data.kind === "normal"
-    ? compiledGraph.sourceFor(node.id, "height")
+    ? compiledGraph.inputSourceFor(node.id, "height")
     : undefined;
   const normalStrength = node.data.values.strength ?? 1;
+  const plan = createEvaluationPlan(
+    compiledGraph,
+    [heightSource ?? nodeSource],
+  );
 
   for (let y = 0; y < size; y += 1) {
     for (let x = 0; x < size; x += 1) {
@@ -333,45 +386,30 @@ export function evaluateNodeMap(
       const v = y / size;
       const offset = (y * size + x) * 4;
       if (node.data.kind !== "normal") {
+        const evaluated = evaluatePlanAt(plan, u, v);
         writePixel(
           pixels,
           offset,
-          evaluateNode(node.id, u, v, nodes, compiledGraph, new Set()),
+          sampleEvaluatedSource(evaluated, nodeSource),
         );
         continue;
       }
 
-      const heightL = evaluateNode(
+      const heightL = sampleEvaluatedSource(
+        evaluatePlanAt(plan, (u - step + 1) % 1, v),
         heightSource,
-        (u - step + 1) % 1,
-        v,
-        nodes,
-        compiledGraph,
-        new Set(),
       )[0];
-      const heightR = evaluateNode(
+      const heightR = sampleEvaluatedSource(
+        evaluatePlanAt(plan, (u + step) % 1, v),
         heightSource,
-        (u + step) % 1,
-        v,
-        nodes,
-        compiledGraph,
-        new Set(),
       )[0];
-      const heightD = evaluateNode(
+      const heightD = sampleEvaluatedSource(
+        evaluatePlanAt(plan, u, (v - step + 1) % 1),
         heightSource,
-        u,
-        (v - step + 1) % 1,
-        nodes,
-        compiledGraph,
-        new Set(),
       )[0];
-      const heightU = evaluateNode(
+      const heightU = sampleEvaluatedSource(
+        evaluatePlanAt(plan, u, (v + step) % 1),
         heightSource,
-        u,
-        (v + step) % 1,
-        nodes,
-        compiledGraph,
-        new Set(),
       )[0];
       let nx = (heightL - heightR) * normalStrength * 2;
       let ny = (heightD - heightU) * normalStrength * 2;

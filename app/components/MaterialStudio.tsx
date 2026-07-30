@@ -372,6 +372,7 @@ const nodeHelp = [
   { name: "Value noise", purpose: "Creates repeatable procedural variation. Use Scale for feature size and Seed for a new pattern." },
   { name: "Levels", purpose: "Remaps dark, mid, and bright values. Use it to sharpen masks or control how much of a noise pattern appears." },
   { name: "Blend", purpose: "Mixes two inputs. Connect a base surface to Base and scratches, dirt, or noise to Blend." },
+  { name: "Split channels", purpose: "Breaks a color stream into red, green, blue, and alpha scalar outputs for masks or packed-map workflows." },
   { name: "Roughness", purpose: "Controls reflection sharpness. Low values look polished; high values look matte or chalky." },
   { name: "Metallic", purpose: "Separates metal from non-metal. Use 1 for bare metal and 0 for paint, stone, wood, or plastic." },
   { name: "Normal from height", purpose: "Turns grayscale height detail into surface direction. Increase Strength carefully to avoid inflated detail." },

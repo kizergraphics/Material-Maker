@@ -24,6 +24,7 @@ const icons: Record<MaterialNodeKind, ComponentType<{ size?: number }>> = {
   noise: Dices,
   levels: SlidersHorizontal,
   blend: Blend,
+  channels: SlidersHorizontal,
   roughness: CircleGauge,
   metallic: Gem,
   normal: Waves,
@@ -35,7 +36,7 @@ export function MaterialNode(props: NodeProps<MaterialGraphNode>) {
   const { data, selected } = props;
   const Icon = icons[data.kind];
   const definition = getMaterialNodeDefinition(data.kind);
-  const nodeOutput = definition.outputs[0];
+  const portRows = Math.max(definition.inputs.length, definition.outputs.length);
   const color = data.values.color;
   const thumbnail = data.values.thumbnail;
   const validationIssues = Array.isArray(data.validationIssues)
@@ -48,6 +49,7 @@ export function MaterialNode(props: NodeProps<MaterialGraphNode>) {
     <article
       className={`material-node material-node--${data.category}${thumbnail ? " has-thumbnail" : ""}${validationIssues.length ? " is-invalid" : ""}${selected ? " is-selected" : ""}`}
       data-kind={data.kind}
+      style={{ minHeight: Math.max(78, 58 + portRows * 22) }}
     >
       <header className="material-node__header">
         <span className="material-node__icon" aria-hidden="true">
@@ -104,16 +106,23 @@ export function MaterialNode(props: NodeProps<MaterialGraphNode>) {
         </div>
       ))}
 
-      {nodeOutput ? (
-        <Handle
-          id={nodeOutput.id}
-          type="source"
-          position={Position.Right}
-          className="material-handle material-handle--output"
-          data-port-type={nodeOutput.type}
-          title={`${nodeOutput.label} · ${nodeOutput.type}`}
-        />
-      ) : null}
+      {definition.outputs.map((output, index) => (
+        <div
+          className="material-node__output"
+          key={output.id}
+          style={{ top: 48 + index * 22 }}
+        >
+          <span>{output.label}</span>
+          <Handle
+            id={output.id}
+            type="source"
+            position={Position.Right}
+            className="material-handle material-handle--output"
+            data-port-type={output.type}
+            title={`${output.label} · ${output.type}`}
+          />
+        </div>
+      ))}
     </article>
   );
 }

@@ -201,6 +201,8 @@ test("keeps persistence local and creates only the PBR output node", async () =>
   assert.match(studio, /Graph is incomplete/);
   assert.match(studio, /compileMaterialGraph/);
   assert.match(studio, /validationIssues/);
+  assert.match(node, /definition\.outputs\.map/);
+  assert.match(node, /className="material-node__output"/);
   assert.doesNotMatch(types, /Warm alloy|Micro pitting|Surface variation/);
   assert.match(launcher, /ResolveAppPort\(stateDirectory\)/);
   assert.match(launcher, /app-port\.txt/);

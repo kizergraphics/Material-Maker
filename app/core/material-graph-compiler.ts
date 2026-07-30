@@ -44,6 +44,12 @@ type ResolvedMaterialEdge = {
   sourceType: MaterialPortType;
 };
 
+export type MaterialGraphSource = {
+  nodeId: string;
+  portId: string;
+  type: MaterialPortType;
+};
+
 export type CompiledMaterialGraph = {
   nodesById: ReadonlyMap<string, MaterialGraphNode>;
   outputNode: MaterialGraphNode | undefined;
@@ -53,6 +59,10 @@ export type CompiledMaterialGraph = {
   diagnostics: readonly MaterialGraphDiagnostic[];
   diagnosticsByNode: ReadonlyMap<string, readonly MaterialGraphDiagnostic[]>;
   isValid: boolean;
+  inputSourceFor: (
+    nodeId: string,
+    targetPortId: string,
+  ) => MaterialGraphSource | undefined;
   sourceFor: (nodeId: string, targetPortId: string) => string | undefined;
 };
 
@@ -426,11 +436,15 @@ export function compileMaterialGraph(
     }
   }
 
-  const inputSources = new Map<string, string>();
+  const inputSources = new Map<string, MaterialGraphSource>();
   for (const resolved of resolvedEdges) {
     inputSources.set(
       `${resolved.targetNode.id}:${resolved.targetPort.id}`,
-      resolved.sourceNode.id,
+      {
+        nodeId: resolved.sourceNode.id,
+        portId: resolved.sourcePort.id,
+        type: resolved.sourceType,
+      },
     );
   }
 
@@ -451,7 +465,9 @@ export function compileMaterialGraph(
     diagnostics,
     diagnosticsByNode,
     isValid: !diagnostics.some(({ severity }) => severity === "error"),
-    sourceFor: (nodeId, targetPortId) =>
+    inputSourceFor: (nodeId, targetPortId) =>
       inputSources.get(`${nodeId}:${targetPortId}`),
+    sourceFor: (nodeId, targetPortId) =>
+      inputSources.get(`${nodeId}:${targetPortId}`)?.nodeId,
   };
 }

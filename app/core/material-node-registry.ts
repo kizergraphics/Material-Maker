@@ -3,6 +3,7 @@ export const MATERIAL_NODE_KINDS = [
   "noise",
   "levels",
   "blend",
+  "channels",
   "roughness",
   "metallic",
   "normal",
@@ -93,6 +94,14 @@ export type MaterialNodeEvaluationContext = {
   sampleInput: (portId: string) => MaterialNodeSample;
 };
 
+export type MaterialNodeOutputMap = Readonly<
+  Record<string, MaterialNodeSample>
+>;
+
+export type MaterialNodeEvaluationResult =
+  | MaterialNodeSample
+  | MaterialNodeOutputMap;
+
 export type MaterialNodeDefinition = {
   kind: MaterialNodeKind;
   version: number;
@@ -105,7 +114,9 @@ export type MaterialNodeDefinition = {
   parameters: readonly MaterialNodeParameterDefinition[];
   defaultValues: NodeValueMap;
   summarize: (values: NodeValueMap) => string;
-  evaluate?: (context: MaterialNodeEvaluationContext) => MaterialNodeSample;
+  evaluate?: (
+    context: MaterialNodeEvaluationContext,
+  ) => MaterialNodeEvaluationResult;
 };
 
 const clamp = (value: number, min = 0, max = 1) =>
@@ -254,6 +265,35 @@ export const MATERIAL_NODE_DEFINITIONS: readonly MaterialNodeDefinition[] = [
         a[2] + (b[2] - a[2]) * opacity,
         1,
       ];
+    },
+  },
+  {
+    kind: "channels",
+    version: 1,
+    label: "Split channels",
+    category: "filter",
+    description: "Split a color stream into independent scalar channels.",
+    userCreatable: true,
+    inputs: [
+      { id: "in", label: "Color", type: "dynamic", required: true },
+    ],
+    outputs: [
+      { id: "r", label: "Red", type: "scalar" },
+      { id: "g", label: "Green", type: "scalar" },
+      { id: "b", label: "Blue", type: "scalar" },
+      { id: "a", label: "Alpha", type: "scalar" },
+    ],
+    parameters: [],
+    defaultValues: {},
+    summarize: () => "R · G · B · A",
+    evaluate: ({ sampleInput }) => {
+      const [red, green, blue, alpha] = sampleInput("in");
+      return {
+        r: [red, red, red, 1],
+        g: [green, green, green, 1],
+        b: [blue, blue, blue, 1],
+        a: [alpha, alpha, alpha, 1],
+      };
     },
   },
   {

@@ -25,7 +25,16 @@ test("registry defines every node kind exactly once", () => {
   assert.equal(new Set(definitionKinds).size, definitionKinds.length);
   assert.deepEqual(
     registry.NODE_LIBRARY.map((definition) => definition.kind),
-    ["color", "noise", "levels", "blend", "roughness", "metallic", "normal"],
+    [
+      "color",
+      "noise",
+      "levels",
+      "blend",
+      "channels",
+      "roughness",
+      "metallic",
+      "normal",
+    ],
   );
 });
 
@@ -85,4 +94,20 @@ test("registry evaluators preserve existing deterministic sampling behavior", ()
     sampleInput: () => [0, 0, 0, 1],
   };
   assert.deepEqual(noise.evaluate(context), noise.evaluate(context));
+
+  const channels = registry.getMaterialNodeDefinition("channels");
+  assert.deepEqual(
+    channels.evaluate({
+      u: 0,
+      v: 0,
+      values: {},
+      sampleInput: () => [0.1, 0.2, 0.3, 0.4],
+    }),
+    {
+      r: [0.1, 0.1, 0.1, 1],
+      g: [0.2, 0.2, 0.2, 1],
+      b: [0.3, 0.3, 0.3, 1],
+      a: [0.4, 0.4, 0.4, 1],
+    },
+  );
 });

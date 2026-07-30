@@ -47,9 +47,34 @@ test("compiler creates an indexed, topological graph for valid nodes", () => {
 
   assert.equal(result.isValid, true);
   assert.equal(result.sourceFor("output", "baseColor"), "color");
+  assert.deepEqual(result.inputSourceFor("output", "baseColor"), {
+    nodeId: "color",
+    portId: "out",
+    type: "color",
+  });
   assert.deepEqual(result.topologicalNodeIds, ["color", "output"]);
   assert.deepEqual([...result.reachableNodeIds], ["output", "color"]);
   assert.deepEqual(result.diagnostics, []);
+});
+
+test("compiler preserves the selected source port for multi-output nodes", () => {
+  const nodes = [
+    node("color", "color"),
+    node("channels", "channels"),
+    node("output", "output"),
+  ];
+  const edges = [
+    edge("color-to-channels", "color", "out", "channels", "in"),
+    edge("green-to-roughness", "channels", "g", "output", "roughness"),
+  ];
+  const result = compiler.compileMaterialGraph({ nodes, edges });
+
+  assert.equal(result.isValid, true);
+  assert.deepEqual(result.inputSourceFor("output", "roughness"), {
+    nodeId: "channels",
+    portId: "g",
+    type: "scalar",
+  });
 });
 
 test("compiler reports duplicate inputs and dangling connections", () => {

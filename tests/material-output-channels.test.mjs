@@ -123,3 +123,30 @@ test("unconnected optional outputs use neutral PBR defaults", () => {
   assert.equal(result.roughnessValue, 0.6);
   assert.equal(result.metallicValue, 0);
 });
+
+test("multi-output nodes can branch distinct ports into material channels", () => {
+  const nodes = [
+    node("color", "color", { color: "#336699" }),
+    node("channels", "channels"),
+    node("output", "output"),
+  ];
+  const edges = [
+    edge("color", "color", "out", "channels", "in"),
+    edge("base", "color", "out", "output", "baseColor"),
+    edge("red", "channels", "r", "output", "roughness"),
+    edge("green", "channels", "g", "output", "metallic"),
+    edge("blue", "channels", "b", "output", "ao"),
+  ];
+
+  const result = evaluator.evaluateMaterial({ nodes, edges }, 2);
+
+  assert.deepEqual(new Set(firstChannels(result.roughness)), new Set([51]));
+  assert.deepEqual(new Set(firstChannels(result.metallic)), new Set([102]));
+  assert.deepEqual(
+    new Set(firstChannels(result.ambientOcclusion)),
+    new Set([153]),
+  );
+  assert.equal(result.roughnessValue, 0.2);
+  assert.equal(result.metallicValue, 0.4);
+  assert.deepEqual(result.warnings, []);
+});
