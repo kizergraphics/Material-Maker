@@ -290,7 +290,10 @@ test("keeps persistence local and creates only the PBR output node", async () =>
   );
   assert.match(studio, /onDownloadMap=\{prepareProjectMapDownload\}/);
   assert.match(mapLab, /onDownloadMap:\s*\(channel:\s*TextureMapChannel\)\s*=>\s*Promise<Blob>/);
-  assert.match(mapLab, /Preparing \$\{exportResolution\}px map/);
+  assert.match(mapLab, /value="original"/);
+  assert.match(mapLab, /Original · \$\{sourceDimensions\.width\}×\$\{sourceDimensions\.height\}/);
+  assert.match(mapLab, /Preparing \$\{exportSizeLabel\} map/);
+  assert.match(mapLab, /Applies to individual PNGs, all-map downloads, and material packs/);
   assert.doesNotMatch(mapLab, /getCachedMapBlob\(evaluation,\s*channel\)/);
   assert.match(hosting, /"d1": null/);
   assert.match(hosting, /"r2": null/);

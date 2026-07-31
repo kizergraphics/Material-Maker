@@ -177,7 +177,12 @@ const projectSchema = z.object({
   }),
   sourceTexture: sourceTextureSchema.nullable().optional(),
   mapSettings: mapSettingsSchema.optional(),
-  exportResolution: z.union([z.literal(512), z.literal(1024), z.literal(2048)]).optional(),
+  exportResolution: z.union([
+    z.literal("original"),
+    z.literal(512),
+    z.literal(1024),
+    z.literal(2048),
+  ]).optional(),
 });
 
 function normalizeProject(
@@ -337,10 +342,20 @@ function samePackInputs(
 function evaluateGeneratedTextureGraph(
   project: MaterialProject,
   generated: MaterialEvaluation,
+  maxEdge: number,
 ) {
   return project.nodes.some((node) => node.data.kind === "textureMap")
-    ? evaluateMaterial(project, project.exportResolution, generated)
+    ? evaluateMaterial(project, maxEdge, generated)
     : generated;
+}
+
+export function resolveProjectExportMaxEdge(project: MaterialProject) {
+  if (project.exportResolution !== "original") {
+    return project.exportResolution;
+  }
+  return project.sourceTexture
+    ? Math.max(project.sourceTexture.width, project.sourceTexture.height)
+    : 1024;
 }
 
 function getProjectEvaluationCache(project: MaterialProject) {
@@ -351,30 +366,31 @@ function getProjectEvaluationCache(project: MaterialProject) {
     return projectEvaluationCache;
   }
 
+  const maxEdge = resolveProjectExportMaxEdge(project);
   const evaluation = project.sourceTexture
     ? getPersistentGeneratedMaps(
         project.sourceTexture,
         project.mapSettings,
-        project.exportResolution,
+        maxEdge,
       ).then(async (cached) => {
         const generated =
           cached ??
           (await evaluateSourceTexture(
             project.sourceTexture!,
             project.mapSettings,
-            project.exportResolution,
+            maxEdge,
           ));
         if (!cached) {
           void storePersistentGeneratedMaps(
             project.sourceTexture!,
             project.mapSettings,
-            project.exportResolution,
+            maxEdge,
             generated,
           );
         }
-        return evaluateGeneratedTextureGraph(project, generated);
+        return evaluateGeneratedTextureGraph(project, generated, maxEdge);
       })
-    : Promise.resolve(evaluateMaterial(project, project.exportResolution));
+    : Promise.resolve(evaluateMaterial(project, maxEdge));
   const cache = {
     project,
     evaluation: evaluation.catch((error) => {

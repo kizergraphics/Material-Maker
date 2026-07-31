@@ -70,7 +70,7 @@ export interface MapGenerationSettings {
   };
 }
 
-export type ExportResolution = 512 | 1024 | 2048;
+export type ExportResolution = "original" | 512 | 1024 | 2048;
 
 export const DEFAULT_MAP_SETTINGS: MapGenerationSettings = {
   baseColor: { enabled: true, brightness: 0, contrast: 1, saturation: 1, hue: 0 },

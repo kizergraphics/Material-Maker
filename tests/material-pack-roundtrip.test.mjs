@@ -91,8 +91,28 @@ const materialTypesStub = moduleUrl(`
   };
 `);
 const textureGeneratorStub = moduleUrl(`
-  export async function evaluateSourceTexture() {
-    throw new Error("Source texture evaluation is not expected in this test.");
+  let lastSourceMaxEdge = null;
+  function pixels(value) {
+    return new Uint8ClampedArray([value, value, value, 255]);
+  }
+  export async function evaluateSourceTexture(_source, _settings, maxEdge) {
+    lastSourceMaxEdge = maxEdge;
+    return {
+      width: 1,
+      height: 1,
+      albedo: new Uint8ClampedArray([118, 112, 106, 255]),
+      heightMap: pixels(128),
+      normal: new Uint8ClampedArray([128, 128, 255, 255]),
+      roughness: pixels(153),
+      metallic: pixels(0),
+      ambientOcclusion: pixels(255),
+      roughnessValue: 0.6,
+      metallicValue: 0,
+      warnings: [],
+    };
+  }
+  export function getLastSourceMaxEdge() {
+    return lastSourceMaxEdge;
   }
   export function pixelsForChannel(evaluation, channel) {
     if (channel === "baseColor") return evaluation.albedo;
@@ -125,6 +145,7 @@ const {
   prepareProjectForStorage,
 } = persistenceImport.module;
 const evaluatorStubModule = await import(evaluatorStub);
+const textureGeneratorStubModule = await import(textureGeneratorStub);
 
 test("local storage preparation preserves graph connections and node positions", () => {
   const timestamp = "2026-07-30T15:00:00.000Z";
@@ -244,6 +265,50 @@ test("individual map preparation uses the selected export resolution", async () 
 
   assert.ok(blob);
   assert.equal(evaluatorStubModule.getLastEvaluationSize(), 2048);
+});
+
+test("original export resolution preserves the source image dimensions", async () => {
+  const timestamp = "2026-07-30T15:45:00.000Z";
+  const project = {
+    schemaVersion: 4,
+    id: "original-resolution-map",
+    name: "Original Resolution Map",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    nodes: [],
+    edges: [],
+    preview: {
+      shape: "sphere",
+      channel: "baseColor",
+      showGrid: true,
+      autoRotate: true,
+      tiled: true,
+    },
+    sourceTexture: {
+      name: "source.png",
+      mimeType: "image/png",
+      dataUrl: "data:image/png;base64,AA==",
+      width: 1600,
+      height: 900,
+      sizeBytes: 1,
+    },
+    mapSettings: {
+      baseColor: { enabled: true, brightness: 0, contrast: 1, saturation: 1, hue: 0 },
+      height: { enabled: true, contrast: 1.18, bias: 0, blur: 1, invert: false },
+      normal: { enabled: true, strength: 2.2, detail: 1, invertY: false },
+      roughness: { enabled: true, base: 0.62, variation: 0.34, invert: false },
+      metallic: { enabled: true, base: 0, variation: 0, invert: false },
+      ao: { enabled: true, strength: 1.2, radius: 4, bias: 0 },
+    },
+    exportResolution: "original",
+  };
+
+  const blob = await getCachedProjectMapBlob(project, "baseColor");
+  const stored = prepareProjectForStorage(project);
+
+  assert.ok(blob);
+  assert.equal(textureGeneratorStubModule.getLastSourceMaxEdge(), 1600);
+  assert.equal(stored.exportResolution, "original");
 });
 
 test("legacy material packs migrate, normalize, export, and re-import", async () => {

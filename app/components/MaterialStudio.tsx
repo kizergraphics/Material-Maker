@@ -1410,6 +1410,7 @@ function StudioWorkspace() {
                 channel={preview.channel}
                 settings={mapSettings}
                 exportResolution={exportResolution}
+                sourceDimensions={sourceTexture}
                 projectName={projectName}
                 isGenerating={isGenerating}
                 onDownloadMap={prepareProjectMapDownload}

@@ -497,6 +497,7 @@ export function MaterialViewerClient() {
               channel={channel}
               settings={project.mapSettings}
               exportResolution={project.exportResolution}
+              sourceDimensions={project.sourceTexture}
               projectName={project.name}
               isGenerating={isGenerating}
               onDownloadMap={(mapChannel) =>

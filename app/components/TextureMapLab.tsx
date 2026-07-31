@@ -220,6 +220,7 @@ export function TextureMapInspector({
   channel,
   settings,
   exportResolution,
+  sourceDimensions,
   projectName,
   isGenerating = false,
   onDownloadMap,
@@ -232,6 +233,7 @@ export function TextureMapInspector({
   channel: PreviewChannel;
   settings: MapGenerationSettings;
   exportResolution: ExportResolution;
+  sourceDimensions?: { width: number; height: number } | null;
   projectName: string;
   isGenerating?: boolean;
   onDownloadMap: (channel: TextureMapChannel) => Promise<Blob>;
@@ -244,6 +246,12 @@ export function TextureMapInspector({
   const [downloadState, setDownloadState] = useState<
     "idle" | "preparing" | "error"
   >("idle");
+  const exportSizeLabel =
+    exportResolution === "original"
+      ? sourceDimensions
+        ? `${sourceDimensions.width}×${sourceDimensions.height}px`
+        : "original size"
+      : `${exportResolution}px max`;
 
   const downloadCurrent = async () => {
     if (
@@ -302,23 +310,39 @@ export function TextureMapInspector({
         <span className="node-kind-tag node-kind-tag--filter">Live</span>
       </div>
 
+      <label className="resolution-field">
+        <span>Download size</span>
+        <select
+          aria-label="Download map size"
+          value={exportResolution}
+          onChange={(event) =>
+            onSetExportResolution(
+              event.target.value === "original"
+                ? "original"
+                : (Number(event.target.value) as ExportResolution),
+            )
+          }
+        >
+          <option value="original" disabled={!sourceDimensions}>
+            {sourceDimensions
+              ? `Original · ${sourceDimensions.width}×${sourceDimensions.height}`
+              : "Original · source required"}
+          </option>
+          <option value={512}>512 max edge</option>
+          <option value={1024}>1024 max edge</option>
+          <option value={2048}>2048 max edge</option>
+        </select>
+      </label>
+      <p className="resolution-help">
+        Applies to individual PNGs, all-map downloads, and material packs.
+      </p>
+
       {channel === "material" ? (
         <>
           <div className="map-overview">
             <WandSparkles size={18} />
             <div><strong>Six maps generated</strong><span>Select a map tab or card to tune it independently.</span></div>
           </div>
-          <label className="resolution-field">
-            <span>Export resolution</span>
-            <select
-              value={exportResolution}
-              onChange={(event) => onSetExportResolution(Number(event.target.value) as ExportResolution)}
-            >
-              <option value={512}>512 max edge</option>
-              <option value={1024}>1024 max edge</option>
-              <option value={2048}>2048 max edge</option>
-            </select>
-          </label>
           <button className="button button--ghost map-reset-button" onClick={onReset}>
             <RefreshCw size={13} /> Reset generation settings
           </button>
@@ -390,10 +414,10 @@ export function TextureMapInspector({
         >
           <Download size={13} />
           {downloadState === "preparing"
-            ? `Preparing ${exportResolution}px map…`
+            ? `Preparing ${exportSizeLabel} map…`
             : downloadState === "error"
               ? "Download failed · Retry"
-              : `Download ${mapTitles[channel]} PNG · ${exportResolution}px max`}
+              : `Download ${mapTitles[channel]} PNG · ${exportSizeLabel}`}
         </button>
       ) : null}
 

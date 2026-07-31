@@ -1857,6 +1857,13 @@ input[type="range"]::-webkit-slider-thumb {
   font-size: 8px;
 }
 
+.resolution-help {
+  margin: -4px 0 8px;
+  color: #746b62;
+  font-size: 8px;
+  line-height: 1.45;
+}
+
 .map-reset-button,
 .map-download-button {
   width: 100%;
