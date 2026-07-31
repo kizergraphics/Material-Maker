@@ -284,6 +284,14 @@ test("keeps persistence local and creates only the PBR output node", async () =>
   assert.match(deferredTools, /prewarmDeferredMaterialTools/);
   assert.match(persistence, /evaluationBlobCache/);
   assert.match(persistence, /getCachedProjectMapBlobs/);
+  assert.match(
+    persistence,
+    /getCachedProjectMapBlob\([\s\S]*?getCachedProjectMapBlobs\(project,\s*\[channel\]\)/,
+  );
+  assert.match(studio, /onDownloadMap=\{prepareProjectMapDownload\}/);
+  assert.match(mapLab, /onDownloadMap:\s*\(channel:\s*TextureMapChannel\)\s*=>\s*Promise<Blob>/);
+  assert.match(mapLab, /Preparing \$\{exportResolution\}px map/);
+  assert.doesNotMatch(mapLab, /getCachedMapBlob\(evaluation,\s*channel\)/);
   assert.match(hosting, /"d1": null/);
   assert.match(hosting, /"r2": null/);
   await assert.rejects(access(new URL("app/_sites-preview", projectRoot)));

@@ -27,6 +27,7 @@ import {
 } from "react";
 import {
   deleteProjectLocal,
+  getCachedProjectMapBlob,
   importMaterialPack,
   loadProjectsLocal,
   saveProjectLocal,
@@ -496,9 +497,11 @@ export function MaterialViewerClient() {
               channel={channel}
               settings={project.mapSettings}
               exportResolution={project.exportResolution}
-              evaluation={evaluation}
               projectName={project.name}
               isGenerating={isGenerating}
+              onDownloadMap={(mapChannel) =>
+                getCachedProjectMapBlob(project, mapChannel)
+              }
               onUpdate={updateMapSettings}
               onReset={() => {
                 setProject((current) => ({

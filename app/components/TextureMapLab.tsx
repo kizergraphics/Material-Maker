@@ -10,12 +10,9 @@ import {
   Trash2,
   WandSparkles,
 } from "lucide-react";
-import { useEffect, useRef, type DragEvent } from "react";
+import { useEffect, useRef, useState, type DragEvent } from "react";
 import { type MaterialEvaluation } from "../core/material-evaluator";
-import {
-  downloadBlob,
-  getCachedMapBlob,
-} from "../core/material-persistence";
+import { downloadBlob } from "../core/material-persistence";
 import type {
   ExportResolution,
   MapGenerationSettings,
@@ -223,9 +220,9 @@ export function TextureMapInspector({
   channel,
   settings,
   exportResolution,
-  evaluation,
   projectName,
   isGenerating = false,
+  onDownloadMap,
   onUpdate,
   onChangeStart = () => undefined,
   onReset,
@@ -235,22 +232,38 @@ export function TextureMapInspector({
   channel: PreviewChannel;
   settings: MapGenerationSettings;
   exportResolution: ExportResolution;
-  evaluation: MaterialEvaluation;
   projectName: string;
   isGenerating?: boolean;
+  onDownloadMap: (channel: TextureMapChannel) => Promise<Blob>;
   onUpdate: (map: keyof MapGenerationSettings, values: Record<string, number | boolean>) => void;
   onChangeStart?: () => void;
   onReset: () => void;
   onSetExportResolution: (resolution: ExportResolution) => void;
   note?: string;
 }) {
+  const [downloadState, setDownloadState] = useState<
+    "idle" | "preparing" | "error"
+  >("idle");
+
   const downloadCurrent = async () => {
-    if (channel === "material" || isGenerating) return;
+    if (
+      channel === "material" ||
+      isGenerating ||
+      downloadState === "preparing"
+    ) {
+      return;
+    }
+    setDownloadState("preparing");
     const safeName = projectName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "material";
-    downloadBlob(
-      await getCachedMapBlob(evaluation, channel),
-      `${safeName}-${channel}.png`,
-    );
+    try {
+      downloadBlob(
+        await onDownloadMap(channel),
+        `${safeName}-${channel}.png`,
+      );
+      setDownloadState("idle");
+    } catch {
+      setDownloadState("error");
+    }
   };
 
   const update = (map: keyof MapGenerationSettings, key: string, value: number | boolean) => {
@@ -373,9 +386,14 @@ export function TextureMapInspector({
         <button
           className="button button--ghost map-download-button"
           onClick={() => void downloadCurrent()}
-          disabled={isGenerating}
+          disabled={isGenerating || downloadState === "preparing"}
         >
-          <Download size={13} /> Download {mapTitles[channel]} PNG
+          <Download size={13} />
+          {downloadState === "preparing"
+            ? `Preparing ${exportResolution}px map…`
+            : downloadState === "error"
+              ? "Download failed · Retry"
+              : `Download ${mapTitles[channel]} PNG · ${exportResolution}px max`}
         </button>
       ) : null}
 

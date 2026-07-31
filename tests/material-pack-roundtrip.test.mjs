@@ -39,10 +39,12 @@ const migrationImport = await importTypeScriptModule(
   new Map([["./material-node-registry", registryImport.url]]),
 );
 const evaluatorStub = moduleUrl(`
+  let lastEvaluationSize = null;
   function pixels(value) {
     return new Uint8ClampedArray([value, value, value, 255]);
   }
-  export function evaluateMaterial() {
+  export function evaluateMaterial(_project, size) {
+    lastEvaluationSize = size;
     return {
       width: 1,
       height: 1,
@@ -56,6 +58,9 @@ const evaluatorStub = moduleUrl(`
       metallicValue: 0,
       warnings: [],
     };
+  }
+  export function getLastEvaluationSize() {
+    return lastEvaluationSize;
   }
   export function pixelsToCanvas(pixels, width, height) {
     return { pixels, width, height };
@@ -115,9 +120,11 @@ const persistenceImport = await importTypeScriptModule(
 
 const {
   createMaterialPack,
+  getCachedProjectMapBlob,
   importMaterialPack,
   prepareProjectForStorage,
 } = persistenceImport.module;
+const evaluatorStubModule = await import(evaluatorStub);
 
 test("local storage preparation preserves graph connections and node positions", () => {
   const timestamp = "2026-07-30T15:00:00.000Z";
@@ -202,6 +209,41 @@ test("local storage preparation preserves graph connections and node positions",
     },
   ]);
   assert.equal("selected" in stored.nodes[0], false);
+});
+
+test("individual map preparation uses the selected export resolution", async () => {
+  const timestamp = "2026-07-30T15:30:00.000Z";
+  const project = {
+    schemaVersion: 4,
+    id: "full-resolution-map",
+    name: "Full Resolution Map",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    nodes: [],
+    edges: [],
+    preview: {
+      shape: "sphere",
+      channel: "roughness",
+      showGrid: true,
+      autoRotate: true,
+      tiled: true,
+    },
+    sourceTexture: null,
+    mapSettings: {
+      baseColor: { enabled: true, brightness: 0, contrast: 1, saturation: 1, hue: 0 },
+      height: { enabled: true, contrast: 1.18, bias: 0, blur: 1, invert: false },
+      normal: { enabled: true, strength: 2.2, detail: 1, invertY: false },
+      roughness: { enabled: true, base: 0.62, variation: 0.34, invert: false },
+      metallic: { enabled: true, base: 0, variation: 0, invert: false },
+      ao: { enabled: true, strength: 1.2, radius: 4, bias: 0 },
+    },
+    exportResolution: 2048,
+  };
+
+  const blob = await getCachedProjectMapBlob(project, "roughness");
+
+  assert.ok(blob);
+  assert.equal(evaluatorStubModule.getLastEvaluationSize(), 2048);
 });
 
 test("legacy material packs migrate, normalize, export, and re-import", async () => {

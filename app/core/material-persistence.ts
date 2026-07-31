@@ -427,6 +427,16 @@ export async function getCachedProjectMapBlobs(
   return { evaluation, blobs };
 }
 
+export async function getCachedProjectMapBlob(
+  project: MaterialProject,
+  channel: TextureMapChannel,
+) {
+  const { blobs } = await getCachedProjectMapBlobs(project, [channel]);
+  const blob = blobs[0]?.blob;
+  if (!blob) throw new Error("The selected map could not be prepared.");
+  return blob;
+}
+
 async function buildMaterialPack(
   project: MaterialProject,
   evaluationCache: ProjectEvaluationCache,

@@ -58,6 +58,7 @@ import {
   createMaterialPack,
   deleteProjectLocal,
   downloadBlob,
+  getCachedProjectMapBlob,
   getCachedProjectMapBlobs,
   importMaterialPack,
   loadProjectsLocal,
@@ -950,6 +951,17 @@ function StudioWorkspace() {
     }
   }, []);
 
+  const prepareProjectMapDownload = useCallback(
+    async (channel: TextureMapChannel) => {
+      const state = useMaterialStore.getState();
+      if (!state.hasActiveProject || !state.sourceTexture) {
+        throw new Error("Open a source texture before downloading maps.");
+      }
+      return getCachedProjectMapBlob(state.toProject(), channel);
+    },
+    [],
+  );
+
   const persistGraphImmediately = useCallback(() => {
     const state = useMaterialStore.getState();
     if (!state.hasActiveProject) return;
@@ -1398,9 +1410,9 @@ function StudioWorkspace() {
                 channel={preview.channel}
                 settings={mapSettings}
                 exportResolution={exportResolution}
-                evaluation={mapLabEvaluation}
                 projectName={projectName}
                 isGenerating={isGenerating}
+                onDownloadMap={prepareProjectMapDownload}
                 onUpdate={updateMapSettings}
                 onChangeStart={checkpoint}
                 onReset={resetMapSettings}
