@@ -373,7 +373,7 @@ function evaluateGraphNodeMapsInWorker(
 
 const nodeHelp = [
   { name: "Base color", purpose: "Sets the surface color. Use it as a solid starting layer or as one side of a blend." },
-  { name: "Value noise", purpose: "Creates repeatable procedural variation. Use Scale for feature size and Seed for a new pattern." },
+  { name: "Cloud noise", purpose: "Creates soft, layered cloud variation without a blocky grid pattern. Use Scale for feature size and Seed for a new pattern." },
   { name: "Levels", purpose: "Remaps dark, mid, and bright values. Use it to sharpen masks or control how much of a noise pattern appears." },
   { name: "Blend", purpose: "Mixes two inputs. Connect a base surface to Base and scratches, dirt, or noise to Blend." },
   { name: "Split channels", purpose: "Breaks a color stream into red, green, blue, and alpha scalar outputs for masks or packed-map workflows." },
@@ -678,7 +678,11 @@ function StudioWorkspace() {
     error: generationError,
   } = useMaterialEvaluation(
     { nodes, edges, sourceTexture, mapSettings },
-    256,
+    sourceTexture
+      ? exportResolution === "original"
+        ? Math.min(2048, Math.max(sourceTexture.width, sourceTexture.height))
+        : exportResolution
+      : 256,
   );
   const mapLabEvaluation = sourceEvaluation ?? evaluation;
   const compiledGraph = useMemo(

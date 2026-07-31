@@ -16,13 +16,21 @@ import {
   MeshBuilder,
   PBRMaterial,
   Scene,
+  SceneLoader,
   ShaderLanguage,
   ShadowGenerator,
   StandardMaterial,
   Texture,
+  TransformNode,
   Vector3,
 } from "@babylonjs/core";
-import type { BaseTexture, MaterialDefines, UniformBuffer } from "@babylonjs/core";
+import "@babylonjs/loaders/FBX";
+import type {
+  BaseTexture,
+  MaterialDefines,
+  Node,
+  UniformBuffer,
+} from "@babylonjs/core";
 import { useEffect, useRef, useState } from "react";
 import type { MaterialEvaluation } from "../core/material-evaluator";
 import type {
@@ -102,6 +110,9 @@ type PreviewGpuState = {
   orm?: UploadedTexture;
   ormSources?: OrmSources;
 };
+
+type PreviewMappingMode = "uv" | "triplanar";
+type UvTiling = 1 | 2 | 4;
 
 class TriPlanarPBRPlugin extends MaterialPluginBase {
   private readonly textures: TriPlanarTextures;
@@ -256,7 +267,66 @@ class TriPlanarPBRPlugin extends MaterialPluginBase {
   }
 }
 
-function createPreviewMesh(scene: Scene, shape: PreviewShape) {
+const PRIMARY_PREVIEW_MODEL = "/models/material-maker-primary.fbx";
+
+type PreviewMeshGroup = {
+  root: TransformNode;
+  meshes: Mesh[];
+};
+
+function applyMaterialToPreviewGroup(
+  group: PreviewMeshGroup | null,
+  material: PBRMaterial | StandardMaterial | null,
+) {
+  for (const mesh of group?.meshes ?? []) mesh.material = material;
+}
+
+function normalizeImportedPreviewRoot(root: TransformNode) {
+  root.computeWorldMatrix(true);
+  const bounds = root.getHierarchyBoundingVectors(true);
+  const size = bounds.max.subtract(bounds.min);
+  const largestDimension = Math.max(size.x, size.y, size.z);
+  if (largestDimension > 0) {
+    root.scaling.scaleInPlace(2.75 / largestDimension);
+  }
+  root.computeWorldMatrix(true);
+  const normalizedBounds = root.getHierarchyBoundingVectors(true);
+  root.position.subtractInPlace(
+    normalizedBounds.min.add(normalizedBounds.max).scale(0.5),
+  );
+  root.computeWorldMatrix(true);
+}
+
+async function createPrimaryPreviewMesh(scene: Scene) {
+  const result = await SceneLoader.ImportMeshAsync(
+    null,
+    "/models/",
+    "material-maker-primary.fbx",
+    scene,
+  );
+  const importedMeshes = result.meshes.filter(
+    (mesh): mesh is Mesh => mesh instanceof Mesh && mesh.getTotalVertices() > 0,
+  );
+  if (!importedMeshes.length) {
+    throw new Error(`${PRIMARY_PREVIEW_MODEL} did not contain a renderable mesh.`);
+  }
+
+  // Keep Babylon's FBX handedness-conversion root intact. Baking its negative-Z
+  // transform into a merged mesh can detach otherwise-correct source normals
+  // from the winding order chosen by the loader.
+  const root = new TransformNode("primary-preview-root", scene);
+  const importedNodes = new Set<Node>([
+    ...result.meshes,
+    ...result.transformNodes,
+  ]);
+  for (const node of importedNodes) {
+    if (!node.parent || !importedNodes.has(node.parent)) node.parent = root;
+  }
+  normalizeImportedPreviewRoot(root);
+  return { root, meshes: importedMeshes } satisfies PreviewMeshGroup;
+}
+
+async function createPreviewMesh(scene: Scene, shape: PreviewShape) {
   if (shape === "cube") {
     const mesh = MeshBuilder.CreateBox(
       "preview-mesh",
@@ -264,7 +334,7 @@ function createPreviewMesh(scene: Scene, shape: PreviewShape) {
       scene,
     );
     mesh.rotation.y = Math.PI / 4;
-    return mesh;
+    return { root: mesh, meshes: [mesh] } satisfies PreviewMeshGroup;
   }
   if (shape === "plane") {
     const mesh = MeshBuilder.CreateGround(
@@ -273,13 +343,9 @@ function createPreviewMesh(scene: Scene, shape: PreviewShape) {
       scene,
     );
     mesh.position.y = 0.1;
-    return mesh;
+    return { root: mesh, meshes: [mesh] } satisfies PreviewMeshGroup;
   }
-  return MeshBuilder.CreateSphere(
-    "preview-mesh",
-    { diameter: 2.75, segments: 96 },
-    scene,
-  );
+  return createPrimaryPreviewMesh(scene);
 }
 
 function pixelBuffersEqual(
@@ -319,13 +385,26 @@ function createTexture(
     name,
     { width, height },
     scene,
-    false,
+    true,
     Texture.TRILINEAR_SAMPLINGMODE,
   );
   texture.wrapU = Texture.WRAP_ADDRESSMODE;
   texture.wrapV = Texture.WRAP_ADDRESSMODE;
+  texture.anisotropicFilteringLevel = 16;
   uploadTexturePixels(texture, pixels, width, height);
   return { texture, pixels };
+}
+
+function applyUvTiling(texture: DynamicTexture, tiling: UvTiling) {
+  texture.uScale = tiling;
+  texture.vScale = tiling;
+}
+
+function previewResolutionLabel(width: number, height: number) {
+  const maxEdge = Math.max(width, height);
+  if (maxEdge >= 2048) return "2K";
+  if (maxEdge >= 1024) return "1K";
+  return `${maxEdge}`;
 }
 
 function updateTexture(
@@ -391,7 +470,7 @@ export function MaterialPreview({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const engineRef = useRef<Engine | null>(null);
   const sceneRef = useRef<Scene | null>(null);
-  const meshRef = useRef<Mesh | null>(null);
+  const previewGroupRef = useRef<PreviewMeshGroup | null>(null);
   const groundRef = useRef<Mesh | null>(null);
   const shadowRef = useRef<ShadowGenerator | null>(null);
   const materialRef = useRef<PBRMaterial | StandardMaterial | null>(null);
@@ -399,6 +478,8 @@ export function MaterialPreview({
   const autoRotateRef = useRef(autoRotate);
   const isPointerInteractingRef = useRef(false);
   const [fps, setFps] = useState(60);
+  const [mappingMode, setMappingMode] = useState<PreviewMappingMode>("uv");
+  const [uvTiling, setUvTiling] = useState<UvTiling>(1);
 
   useEffect(() => {
     autoRotateRef.current = autoRotate;
@@ -518,8 +599,8 @@ export function MaterialPreview({
     window.addEventListener("pointercancel", endPointerInteraction);
 
     scene.onBeforeRenderObservable.add(() => {
-      if (meshRef.current && autoRotateRef.current && !isPointerInteractingRef.current) {
-        meshRef.current.rotation.y += engine.getDeltaTime() * 0.00012;
+      if (previewGroupRef.current && autoRotateRef.current && !isPointerInteractingRef.current) {
+        previewGroupRef.current.root.rotation.y += engine.getDeltaTime() * 0.00012;
       }
     });
 
@@ -550,12 +631,41 @@ export function MaterialPreview({
   useEffect(() => {
     const scene = sceneRef.current;
     if (!scene) return;
-    if (meshRef.current) shadowRef.current?.removeShadowCaster(meshRef.current);
-    meshRef.current?.dispose(false, true);
-    const mesh = createPreviewMesh(scene, shape);
-    mesh.material = materialRef.current;
-    shadowRef.current?.addShadowCaster(mesh, true);
-    meshRef.current = mesh;
+    let cancelled = false;
+    for (const mesh of previewGroupRef.current?.meshes ?? []) {
+      shadowRef.current?.removeShadowCaster(mesh);
+    }
+    previewGroupRef.current?.root.dispose(false, true);
+    previewGroupRef.current = null;
+
+    void createPreviewMesh(scene, shape)
+      .then((group) => {
+        if (cancelled || scene.isDisposed) {
+          group.root.dispose(false, true);
+          return;
+        }
+        for (const mesh of group.meshes) {
+          mesh.material = materialRef.current;
+          shadowRef.current?.addShadowCaster(mesh, true);
+        }
+        previewGroupRef.current = group;
+      })
+      .catch((error: unknown) => {
+        if (cancelled || scene.isDisposed) return;
+        console.error("Unable to load the primary preview model.", error);
+        const fallback = MeshBuilder.CreateSphere(
+          "preview-mesh-fallback",
+          { diameter: 2.75, segments: 96 },
+          scene,
+        );
+        fallback.material = materialRef.current;
+        shadowRef.current?.addShadowCaster(fallback, true);
+        previewGroupRef.current = { root: fallback, meshes: [fallback] };
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [shape]);
 
   useEffect(() => {
@@ -585,6 +695,8 @@ export function MaterialPreview({
     channel === "material" && mapSettings.ao.enabled;
   const materialStructureKey = [
     channel,
+    mappingMode,
+    uvTiling,
     evaluation.width,
     evaluation.height,
     materialBaseColorEnabled,
@@ -680,7 +792,12 @@ export function MaterialPreview({
       diagnostic.unlit = true;
       diagnostic.albedoColor = Color3.White();
       nextGpuState.albedo = normal;
-      new TriPlanarPBRPlugin(diagnostic, { albedo: normal.texture });
+      if (mappingMode === "triplanar") {
+        new TriPlanarPBRPlugin(diagnostic, { albedo: normal.texture });
+      } else {
+        applyUvTiling(normal.texture, uvTiling);
+        diagnostic.albedoTexture = normal.texture;
+      }
       material = diagnostic;
     } else if (
       channel === "height" ||
@@ -706,9 +823,14 @@ export function MaterialPreview({
       diagnostic.unlit = true;
       diagnostic.albedoColor = Color3.White();
       nextGpuState.albedo = diagnosticTexture;
-      new TriPlanarPBRPlugin(diagnostic, {
-        albedo: diagnosticTexture.texture,
-      });
+      if (mappingMode === "triplanar") {
+        new TriPlanarPBRPlugin(diagnostic, {
+          albedo: diagnosticTexture.texture,
+        });
+      } else {
+        applyUvTiling(diagnosticTexture.texture, uvTiling);
+        diagnostic.albedoTexture = diagnosticTexture.texture;
+      }
       material = diagnostic;
     } else {
       const pbr = new PBRMaterial("generated-pbr", scene);
@@ -722,7 +844,12 @@ export function MaterialPreview({
           evaluation.height,
         );
         nextGpuState.albedo = albedo;
-        triPlanarTextures.albedo = albedo.texture;
+        if (mappingMode === "triplanar") {
+          triPlanarTextures.albedo = albedo.texture;
+        } else {
+          applyUvTiling(albedo.texture, uvTiling);
+          pbr.albedoTexture = albedo.texture;
+        }
       } else {
         pbr.albedoColor = new Color3(0.5, 0.5, 0.5);
       }
@@ -750,9 +877,18 @@ export function MaterialPreview({
         );
         nextGpuState.orm = orm;
         nextGpuState.ormSources = ormSources;
-        triPlanarTextures.orm = orm.texture;
         pbr.metallic = 1;
         pbr.roughness = 1;
+        orm.texture.gammaSpace = false;
+        if (mappingMode === "triplanar") {
+          triPlanarTextures.orm = orm.texture;
+        } else {
+          applyUvTiling(orm.texture, uvTiling);
+          pbr.metallicTexture = orm.texture;
+          pbr.useAmbientOcclusionFromMetallicTextureRed = true;
+          pbr.useRoughnessFromMetallicTextureGreen = true;
+          pbr.useMetallnessFromMetallicTextureBlue = true;
+        }
         if (materialNormalEnabled) {
           const normal = createTexture(
             scene,
@@ -762,13 +898,21 @@ export function MaterialPreview({
             evaluation.height,
           );
           nextGpuState.normal = normal;
-          triPlanarTextures.normal = normal.texture;
+          normal.texture.gammaSpace = false;
+          if (mappingMode === "triplanar") {
+            triPlanarTextures.normal = normal.texture;
+          } else {
+            applyUvTiling(normal.texture, uvTiling);
+            pbr.bumpTexture = normal.texture;
+          }
         }
       } else {
         pbr.metallic = 0;
         pbr.roughness = 0.76;
       }
-      new TriPlanarPBRPlugin(pbr, triPlanarTextures);
+      if (mappingMode === "triplanar") {
+        new TriPlanarPBRPlugin(pbr, triPlanarTextures);
+      }
       pbr.environmentIntensity = 0.9;
       pbr.directIntensity = 1.08;
       pbr.specularIntensity = 1.12;
@@ -783,7 +927,7 @@ export function MaterialPreview({
 
     materialRef.current = material;
     gpuStateRef.current = nextGpuState;
-    if (meshRef.current) meshRef.current.material = material;
+    applyMaterialToPreviewGroup(previewGroupRef.current, material);
   }, [
     channel,
     evaluation.albedo,
@@ -800,12 +944,14 @@ export function MaterialPreview({
     materialNormalEnabled,
     materialRoughnessEnabled,
     materialStructureKey,
+    mappingMode,
     previewAlbedo,
     previewAo,
     previewHeight,
     previewMetallic,
     previewNormal,
     previewRoughness,
+    uvTiling,
   ]);
 
   return (
@@ -816,10 +962,42 @@ export function MaterialPreview({
         aria-label="Interactive three-dimensional material preview"
       />
       <div className="material-preview__badges" aria-hidden="true">
-        <span>256 PREVIEW</span>
+        <span>{previewResolutionLabel(evaluation.width, evaluation.height)} PREVIEW</span>
         <span>{fps} FPS</span>
-        {shape === "sphere" ? <span>SEAMLESS TRI-PLANAR</span> : null}
+        {shape === "sphere" ? (
+          <span>{mappingMode === "uv" ? "MODEL UVS" : "SEAMLESS TRI-PLANAR"}</span>
+        ) : null}
         {channel !== "material" && !mapSettings[channel].enabled ? <span>MAP OFF</span> : null}
+      </div>
+      <div className="material-preview__mapping-tools">
+        <div className="material-preview__mapping" role="group" aria-label="Texture mapping mode">
+          <button
+            type="button"
+            className={mappingMode === "uv" ? "is-active" : ""}
+            onClick={() => setMappingMode("uv")}
+            aria-pressed={mappingMode === "uv"}
+          >Model UVs</button>
+          <button
+            type="button"
+            className={mappingMode === "triplanar" ? "is-active" : ""}
+            onClick={() => setMappingMode("triplanar")}
+            aria-pressed={mappingMode === "triplanar"}
+          >Tri-planar</button>
+        </div>
+        {mappingMode === "uv" ? (
+          <label className="material-preview__uv-tiling">
+            <span>UV tile</span>
+            <select
+              aria-label="UV texture tiling"
+              value={uvTiling}
+              onChange={(event) => setUvTiling(Number(event.target.value) as UvTiling)}
+            >
+              <option value={1}>1×</option>
+              <option value={2}>2×</option>
+              <option value={4}>4×</option>
+            </select>
+          </label>
+        ) : null}
       </div>
       <div className="material-preview__hint">Drag to orbit · Scroll to zoom</div>
     </div>

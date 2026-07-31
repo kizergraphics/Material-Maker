@@ -160,25 +160,103 @@ function hash2d(x: number, y: number, seed: number) {
 
 const smooth = (value: number) => value * value * (3 - 2 * value);
 
-function tileableNoise(u: number, v: number, scale: number, seed: number) {
+const fade = (value: number) =>
+  value * value * value * (value * (value * 6 - 15) + 10);
+
+const gradientDirections = [
+  [1, 0],
+  [-1, 0],
+  [0, 1],
+  [0, -1],
+  [Math.SQRT1_2, Math.SQRT1_2],
+  [-Math.SQRT1_2, Math.SQRT1_2],
+  [Math.SQRT1_2, -Math.SQRT1_2],
+  [-Math.SQRT1_2, -Math.SQRT1_2],
+] as const;
+
+function gradientDot(
+  gridX: number,
+  gridY: number,
+  offsetX: number,
+  offsetY: number,
+  seed: number,
+) {
+  const direction =
+    gradientDirections[
+      Math.floor(hash2d(gridX, gridY, seed) * gradientDirections.length) %
+        gradientDirections.length
+    ];
+  return direction[0] * offsetX + direction[1] * offsetY;
+}
+
+function tileableGradientNoise(
+  u: number,
+  v: number,
+  scale: number,
+  seed: number,
+) {
   const frequency = Math.max(1, Math.round(scale));
   const x = u * frequency;
   const y = v * frequency;
   const x0 = Math.floor(x);
   const y0 = Math.floor(y);
-  const x1 = (x0 + 1) % frequency;
-  const y1 = (y0 + 1) % frequency;
   const wrappedX0 = ((x0 % frequency) + frequency) % frequency;
   const wrappedY0 = ((y0 % frequency) + frequency) % frequency;
-  const tx = smooth(x - Math.floor(x));
-  const ty = smooth(y - Math.floor(y));
-  const a = hash2d(wrappedX0, wrappedY0, seed);
-  const b = hash2d(x1, wrappedY0, seed);
-  const c = hash2d(wrappedX0, y1, seed);
-  const d = hash2d(x1, y1, seed);
+  const wrappedX1 = (((x0 + 1) % frequency) + frequency) % frequency;
+  const wrappedY1 = (((y0 + 1) % frequency) + frequency) % frequency;
+  const offsetX = x - x0;
+  const offsetY = y - y0;
+  const tx = fade(offsetX);
+  const ty = fade(offsetY);
+  const a = gradientDot(
+    wrappedX0,
+    wrappedY0,
+    offsetX,
+    offsetY,
+    seed,
+  );
+  const b = gradientDot(wrappedX1, wrappedY0, offsetX - 1, offsetY, seed);
+  const c = gradientDot(wrappedX0, wrappedY1, offsetX, offsetY - 1, seed);
+  const d = gradientDot(
+    wrappedX1,
+    wrappedY1,
+    offsetX - 1,
+    offsetY - 1,
+    seed,
+  );
   const top = a + (b - a) * tx;
   const bottom = c + (d - c) * tx;
-  return top + (bottom - top) * ty;
+  return clamp((top + (bottom - top) * ty) * 1.5, -1, 1);
+}
+
+function tileableCloudNoise(u: number, v: number, scale: number, seed: number) {
+  const baseFrequency = Math.max(1, Math.round(scale));
+  const warpFrequency = Math.max(1, Math.round(baseFrequency / 2));
+  const warpStrength = 0.7 / baseFrequency;
+  const warpedU =
+    u +
+    tileableGradientNoise(u, v, warpFrequency, seed + 101) * warpStrength;
+  const warpedV =
+    v +
+    tileableGradientNoise(u, v, warpFrequency, seed + 307) * warpStrength;
+
+  let amplitude = 1;
+  let totalAmplitude = 0;
+  let total = 0;
+
+  for (let octave = 0; octave < 5; octave += 1) {
+    total +=
+      tileableGradientNoise(
+        warpedU,
+        warpedV,
+        baseFrequency * 2 ** octave,
+        seed + octave * 53,
+      ) * amplitude;
+    totalAmplitude += amplitude;
+    amplitude *= 0.52;
+  }
+
+  return smooth(clamp(total / totalAmplitude * 0.5 + 0.5));
 }
 
 const singleOutput = (type: MaterialPortType, id = "out") =>
@@ -204,9 +282,9 @@ export const MATERIAL_NODE_DEFINITIONS: readonly MaterialNodeDefinition[] = [
   {
     kind: "noise",
     version: 1,
-    label: "Value noise",
+    label: "Cloud noise",
     category: "generator",
-    description: "Deterministic tileable value noise.",
+    description: "Layered, tileable cloud noise with soft organic detail.",
     userCreatable: true,
     inputs: [],
     outputs: singleOutput("scalar"),
@@ -219,7 +297,7 @@ export const MATERIAL_NODE_DEFINITIONS: readonly MaterialNodeDefinition[] = [
     summarize: (values) =>
       `${values.scale ?? 8}× tile · seed ${values.seed ?? 1}`,
     evaluate: ({ u, v, values }) => {
-      const raw = tileableNoise(
+      const raw = tileableCloudNoise(
         u,
         v,
         values.scale ?? 8,

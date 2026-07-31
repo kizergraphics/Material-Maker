@@ -165,18 +165,42 @@ test("keeps persistence local and creates only the PBR output node", async () =>
   assert.match(types, /PROJECT_SCHEMA_VERSION\s*=\s*4/);
   assert.match(studio, /Save to Library/);
   assert.match(studio, /Place Map Lab maps/);
+  assert.match(
+    studio,
+    /exportResolution === "original"[\s\S]*?Math\.min\(2048,[\s\S]*?sourceTexture\.width[\s\S]*?sourceTexture\.height[\s\S]*?: exportResolution/,
+  );
   assert.match(studio, /Nodes & recipes/);
   assert.match(preview, /diagnostic\.unlit = true/);
   assert.match(preview, /DefaultRenderingPipeline/);
   assert.match(preview, /ShadowGenerator/);
   assert.match(preview, /procedural-studio-environment/);
   assert.match(preview, /TriPlanarPBRPlugin/);
+  assert.match(preview, /Model UVs/);
+  assert.match(preview, /Tri-planar/);
+  assert.match(preview, /UV texture tiling/);
+  assert.match(preview, /anisotropicFilteringLevel = 16/);
+  assert.match(
+    preview,
+    /new DynamicTexture\([\s\S]*?true,[\s\S]*?Texture\.TRILINEAR_SAMPLINGMODE/,
+  );
+  assert.match(preview, /applyUvTiling\(albedo\.texture, uvTiling\)/);
+  assert.match(
+    preview,
+    /previewResolutionLabel\(evaluation\.width, evaluation\.height\)/,
+  );
+  assert.match(preview, /useAmbientOcclusionFromMetallicTextureRed = true/);
+  assert.match(preview, /useRoughnessFromMetallicTextureGreen = true/);
+  assert.match(preview, /useMetallnessFromMetallicTextureBlue = true/);
+  assert.match(preview, /pbr\.bumpTexture = normal\.texture/);
   assert.match(
     preview,
     /super\(material,\s*"seamless-triplanar",\s*200,\s*\{\},\s*false,\s*false,\s*true\);[\s\S]*this\.textures = textures;[\s\S]*this\._pluginManager\._addPlugin\(this\);[\s\S]*this\._enable\(true\);/,
   );
   assert.match(preview, /SEAMLESS TRI-PLANAR/);
-  assert.match(preview, /MeshBuilder\.CreateSphere/);
+  assert.match(preview, /material-maker-primary\.fbx/);
+  assert.match(preview, /SceneLoader\.ImportMeshAsync/);
+  assert.match(preview, /primary-preview-root/);
+  assert.doesNotMatch(preview, /Mesh\.MergeMeshes/);
   assert.doesNotMatch(preview, /createPoleFreeSphere/);
   assert.match(preview, /pixelBuffersEqual/);
   assert.match(preview, /uploadTexturePixels/);
@@ -298,7 +322,10 @@ test("keeps persistence local and creates only the PBR output node", async () =>
   assert.match(mapLab, /value="original"/);
   assert.match(mapLab, /Original · \$\{sourceDimensions\.width\}×\$\{sourceDimensions\.height\}/);
   assert.match(mapLab, /Preparing \$\{exportSizeLabel\} map/);
-  assert.match(mapLab, /Applies to individual PNGs, all-map downloads, and material packs/);
+  assert.match(
+    mapLab,
+    /Applies to the live Studio preview \(up to 2K\), individual PNGs, all-map downloads, and material packs/,
+  );
   assert.doesNotMatch(mapLab, /getCachedMapBlob\(evaluation,\s*channel\)/);
   assert.match(hosting, /"d1": null/);
   assert.match(hosting, /"r2": null/);

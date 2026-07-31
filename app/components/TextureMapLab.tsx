@@ -334,7 +334,7 @@ export function TextureMapInspector({
         </select>
       </label>
       <p className="resolution-help">
-        Applies to individual PNGs, all-map downloads, and material packs.
+        Applies to the live Studio preview (up to 2K), individual PNGs, all-map downloads, and material packs.
       </p>
 
       {channel === "material" ? (

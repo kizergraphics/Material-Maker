@@ -193,6 +193,31 @@ test("registry evaluators preserve existing deterministic sampling behavior", ()
   };
   assert.deepEqual(noise.evaluate(context), noise.evaluate(context));
 
+  const sampleNoise = (u, v, seed = 14) =>
+    noise.evaluate({
+      u,
+      v,
+      values: { scale: 8, contrast: 0.62, seed },
+      sampleInput: () => [0, 0, 0, 1],
+    });
+  assert.ok(
+    Math.abs(sampleNoise(0, 0.43)[0] - sampleNoise(1, 0.43)[0]) < 1e-12,
+  );
+  assert.ok(
+    Math.abs(sampleNoise(0.27, 0)[0] - sampleNoise(0.27, 1)[0]) < 1e-12,
+  );
+  assert.notDeepEqual(sampleNoise(0.375, 0.625), sampleNoise(0.375, 0.625, 15));
+  for (const sample of [
+    sampleNoise(0.1, 0.2),
+    sampleNoise(0.4, 0.7),
+    sampleNoise(0.9, 0.3),
+  ]) {
+    assert.equal(sample[0], sample[1]);
+    assert.equal(sample[1], sample[2]);
+    assert.equal(sample[3], 1);
+    assert.ok(sample[0] >= 0 && sample[0] <= 1);
+  }
+
   const channels = registry.getMaterialNodeDefinition("channels");
   assert.deepEqual(
     channels.evaluate({
