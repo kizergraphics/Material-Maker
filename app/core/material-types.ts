@@ -72,6 +72,20 @@ export interface MapGenerationSettings {
 
 export type ExportResolution = "original" | 512 | 1024 | 2048;
 
+export function getExportDimensions(
+  source: Pick<SourceTextureAsset, "width" | "height">,
+  resolution: ExportResolution,
+) {
+  if (resolution === "original") {
+    return { width: source.width, height: source.height };
+  }
+  const scale = resolution / Math.max(source.width, source.height);
+  return {
+    width: Math.max(1, Math.round(source.width * scale)),
+    height: Math.max(1, Math.round(source.height * scale)),
+  };
+}
+
 export const DEFAULT_MAP_SETTINGS: MapGenerationSettings = {
   baseColor: { enabled: true, brightness: 0, contrast: 1, saturation: 1, hue: 0 },
   height: { enabled: true, contrast: 1.18, bias: 0, blur: 1, invert: false },

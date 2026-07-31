@@ -38,6 +38,10 @@ const migrationImport = await importTypeScriptModule(
   "../app/core/material-project-migrations.ts",
   new Map([["./material-node-registry", registryImport.url]]),
 );
+const materialTypesImport = await importTypeScriptModule(
+  "../app/core/material-types.ts",
+  new Map([["./material-node-registry", registryImport.url]]),
+);
 const evaluatorStub = moduleUrl(`
   let lastEvaluationSize = null;
   function pixels(value) {
@@ -78,17 +82,6 @@ const localDatabaseStub = moduleUrl(`
   export async function openMaterialDatabase() {
     throw new Error("Database access is not available in this test.");
   }
-`);
-const materialTypesStub = moduleUrl(`
-  export const PROJECT_SCHEMA_VERSION = 4;
-  export const DEFAULT_MAP_SETTINGS = {
-    baseColor: { enabled: true, brightness: 0, contrast: 1, saturation: 1, hue: 0 },
-    height: { enabled: true, contrast: 1.18, bias: 0, blur: 1, invert: false },
-    normal: { enabled: true, strength: 2.2, detail: 1, invertY: false },
-    roughness: { enabled: true, base: 0.62, variation: 0.34, invert: false },
-    metallic: { enabled: true, base: 0, variation: 0, invert: false },
-    ao: { enabled: true, strength: 1.2, radius: 4, bias: 0 },
-  };
 `);
 const textureGeneratorStub = moduleUrl(`
   let lastSourceMaxEdge = null;
@@ -133,7 +126,7 @@ const persistenceImport = await importTypeScriptModule(
     ["./generated-map-cache", generatedCacheStub],
     ["./local-database", localDatabaseStub],
     ["./material-project-migrations", migrationImport.url],
-    ["./material-types", materialTypesStub],
+    ["./material-types", materialTypesImport.url],
     ["./texture-generator", textureGeneratorStub],
   ]),
 );
@@ -146,6 +139,22 @@ const {
 } = persistenceImport.module;
 const evaluatorStubModule = await import(evaluatorStub);
 const textureGeneratorStubModule = await import(textureGeneratorStub);
+const { getExportDimensions } = materialTypesImport.module;
+
+test("export dimensions preserve aspect ratio and identify upscaling", () => {
+  const wideSource = { width: 1500, height: 997 };
+  const smallSource = { width: 512, height: 512 };
+
+  assert.deepEqual(getExportDimensions(wideSource, "original"), wideSource);
+  assert.deepEqual(getExportDimensions(wideSource, 2048), {
+    width: 2048,
+    height: 1361,
+  });
+  assert.deepEqual(getExportDimensions(smallSource, 2048), {
+    width: 2048,
+    height: 2048,
+  });
+});
 
 test("local storage preparation preserves graph connections and node positions", () => {
   const timestamp = "2026-07-30T15:00:00.000Z";

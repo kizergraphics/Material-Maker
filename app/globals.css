@@ -1021,6 +1021,112 @@ input:focus-visible {
   border-radius: 6px;
 }
 
+.download-size-backdrop {
+  position: fixed;
+  z-index: 70;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(5, 8, 10, .72);
+  backdrop-filter: blur(5px);
+}
+
+.download-size-dialog {
+  width: min(520px, 100%);
+  padding: 18px;
+  background: #11171b;
+  border: 1px solid #414c54;
+  border-radius: 8px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .62);
+}
+
+.download-size-dialog > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.download-size-dialog h2 {
+  margin: 3px 0 0;
+  font-size: 17px;
+}
+
+.download-size-dialog > p {
+  margin: 12px 0;
+  color: #9ba5ab;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.download-size-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.download-size-options button {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+  padding: 12px;
+  color: #cbd2d6;
+  text-align: left;
+  background: #171e23;
+  border: 1px solid #303b43;
+  border-radius: 6px;
+}
+
+.download-size-options button:hover,
+.download-size-options button:focus-visible,
+.download-size-options button.is-selected {
+  color: #f0f2f3;
+  border-color: #8a6847;
+  background: #211b16;
+}
+
+.download-size-options button > span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.download-size-options strong {
+  font-size: 12px;
+}
+
+.download-size-options em {
+  padding: 2px 5px;
+  color: var(--accent);
+  background: rgba(226, 164, 95, .1);
+  border-radius: 3px;
+  font-size: 7px;
+  font-style: normal;
+  text-transform: uppercase;
+}
+
+.download-size-options b {
+  color: #aeb7bc;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.download-size-options small {
+  color: #776f68;
+  font-size: 8px;
+}
+
+.download-size-dialog > footer {
+  margin-top: 12px;
+  color: #746d67;
+  font-size: 8px;
+}
+
 .generation-state {
   display: inline-flex;
   align-items: center;

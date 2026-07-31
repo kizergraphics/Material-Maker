@@ -289,6 +289,11 @@ test("keeps persistence local and creates only the PBR output node", async () =>
     /getCachedProjectMapBlob\([\s\S]*?getCachedProjectMapBlobs\(project,\s*\[channel\]\)/,
   );
   assert.match(studio, /onDownloadMap=\{prepareProjectMapDownload\}/);
+  assert.match(studio, /Choose map size/);
+  assert.match(studio, /getExportDimensions\(source,\s*option\.value\)/);
+  assert.match(studio, /Upscaled · no new detail/);
+  assert.match(studio, /onClick=\{openDownloadSizeDialog\}/);
+  assert.match(studio, /handleDownloadAllMaps\(resolution\)/);
   assert.match(mapLab, /onDownloadMap:\s*\(channel:\s*TextureMapChannel\)\s*=>\s*Promise<Blob>/);
   assert.match(mapLab, /value="original"/);
   assert.match(mapLab, /Original · \$\{sourceDimensions\.width\}×\$\{sourceDimensions\.height\}/);

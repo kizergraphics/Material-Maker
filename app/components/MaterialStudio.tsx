@@ -90,6 +90,8 @@ import {
   type NodeValueMap,
 } from "../core/material-node-registry";
 import {
+  getExportDimensions,
+  type ExportResolution,
   type MaterialGraphNode,
   type MaterialProject,
   type PreviewChannel,
@@ -403,6 +405,85 @@ function GraphHelpPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
+const downloadResolutionOptions: Array<{
+  value: ExportResolution;
+  label: string;
+}> = [
+  { value: "original", label: "Original" },
+  { value: 512, label: "512" },
+  { value: 1024, label: "1K" },
+  { value: 2048, label: "2K" },
+];
+
+function DownloadAllMapsDialog({
+  source,
+  selectedResolution,
+  onCancel,
+  onSelect,
+}: {
+  source: NonNullable<MaterialProject["sourceTexture"]>;
+  selectedResolution: ExportResolution;
+  onCancel: () => void;
+  onSelect: (resolution: ExportResolution) => void;
+}) {
+  const sourceMaxEdge = Math.max(source.width, source.height);
+
+  return (
+    <div className="download-size-backdrop">
+      <section
+        className="download-size-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="download-size-title"
+      >
+        <header>
+          <div>
+            <span className="eyebrow">Download all maps</span>
+            <h2 id="download-size-title">Choose map size</h2>
+          </div>
+          <button className="icon-button" onClick={onCancel} aria-label="Cancel map download">
+            <X size={15} />
+          </button>
+        </header>
+        <p>
+          Every enabled map will use the same dimensions. Aspect ratio is
+          preserved.
+        </p>
+        <div className="download-size-options">
+          {downloadResolutionOptions.map((option) => {
+            const dimensions = getExportDimensions(source, option.value);
+            const targetMaxEdge = Math.max(dimensions.width, dimensions.height);
+            const scaleNote =
+              option.value === "original" || targetMaxEdge === sourceMaxEdge
+                ? "No resizing"
+                : targetMaxEdge > sourceMaxEdge
+                  ? "Upscaled · no new detail"
+                  : "Downscaled from source";
+            return (
+              <button
+                key={option.value}
+                className={selectedResolution === option.value ? "is-selected" : ""}
+                autoFocus={selectedResolution === option.value}
+                onClick={() => onSelect(option.value)}
+              >
+                <span>
+                  <strong>{option.label}</strong>
+                  {selectedResolution === option.value ? <em>Current</em> : null}
+                </span>
+                <b>{dimensions.width}×{dimensions.height}px</b>
+                <small>{scaleNote}</small>
+              </button>
+            );
+          })}
+        </div>
+        <footer>
+          Source image: {source.width}×{source.height}px
+        </footer>
+      </section>
+    </div>
+  );
+}
+
 function RangeField({
   label,
   value,
@@ -543,6 +624,7 @@ function StudioWorkspace() {
   const [notice, setNotice] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [downloadingMaps, setDownloadingMaps] = useState(false);
+  const [isDownloadSizeOpen, setDownloadSizeOpen] = useState(false);
   const [isCompactMenuOpen, setCompactMenuOpen] = useState(false);
   const [rendererLabel, setRendererLabel] = useState("WebGL2 renderer");
   const [workspaceView, setWorkspaceView] = useState<"graph" | "maps">("graph");
@@ -888,6 +970,15 @@ function StudioWorkspace() {
     return () => window.clearTimeout(timeout);
   }, [notice]);
 
+  useEffect(() => {
+    if (!isDownloadSizeOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setDownloadSizeOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [isDownloadSizeOpen]);
+
   const handleExport = useCallback(async () => {
     if (!useMaterialStore.getState().hasActiveProject) return;
     setExporting(true);
@@ -902,7 +993,21 @@ function StudioWorkspace() {
     }
   }, []);
 
-  const handleDownloadAllMaps = useCallback(async () => {
+  const openDownloadSizeDialog = useCallback(() => {
+    const state = useMaterialStore.getState();
+    if (!state.hasActiveProject || !state.sourceTexture) return;
+    const hasEnabledMap = generatedMapChannels.some(
+      (channel) => state.mapSettings[channel].enabled,
+    );
+    if (!hasEnabledMap) {
+      setNotice("Enable at least one map before downloading");
+      return;
+    }
+    setCompactMenuOpen(false);
+    setDownloadSizeOpen(true);
+  }, []);
+
+  const handleDownloadAllMaps = useCallback(async (resolution: ExportResolution) => {
     const state = useMaterialStore.getState();
     if (!state.hasActiveProject || !state.sourceTexture) return;
     const enabledChannels = generatedMapChannels.filter(
@@ -913,9 +1018,14 @@ function StudioWorkspace() {
       return;
     }
 
+    setDownloadSizeOpen(false);
+    setExportResolution(resolution);
     setDownloadingMaps(true);
     try {
-      const project = state.toProject();
+      const project = {
+        ...state.toProject(),
+        exportResolution: resolution,
+      };
       const { blobs } = await getCachedProjectMapBlobs(
         project,
         enabledChannels,
@@ -934,7 +1044,7 @@ function StudioWorkspace() {
     } finally {
       setDownloadingMaps(false);
     }
-  }, []);
+  }, [setExportResolution]);
 
   const saveToLibrary = useCallback(async () => {
     if (!useMaterialStore.getState().hasActiveProject) return;
@@ -1101,7 +1211,7 @@ function StudioWorkspace() {
           </button>
           <button
             className="button button--ghost header-download-maps"
-            onClick={() => void handleDownloadAllMaps()}
+            onClick={openDownloadSizeDialog}
             disabled={!sourceTexture || isGenerating || downloadingMaps}
           >
             {downloadingMaps ? <RotateCw className="spin" size={15} /> : <Download size={15} />}
@@ -1140,7 +1250,7 @@ function StudioWorkspace() {
         {isCompactMenuOpen ? (
           <div className="compact-menu">
             <button onClick={() => fileInputRef.current?.click()}><Upload size={14} /> Import package</button>
-            <button onClick={() => void handleDownloadAllMaps()} disabled={!sourceTexture || isGenerating || downloadingMaps}>
+            <button onClick={openDownloadSizeDialog} disabled={!sourceTexture || isGenerating || downloadingMaps}>
               <Download size={14} /> Download all maps
             </button>
             <button onClick={() => void saveToLibrary()} disabled={!hasActiveProject}><Save size={14} /> Save to Library</button>
@@ -1442,6 +1552,14 @@ function StudioWorkspace() {
 
       {notice ? <div className="studio-toast" role="status"><Check size={14} />{notice}</div> : null}
       {isHelpOpen ? <GraphHelpPanel onClose={() => setHelpOpen(false)} /> : null}
+      {isDownloadSizeOpen && sourceTexture ? (
+        <DownloadAllMapsDialog
+          source={sourceTexture}
+          selectedResolution={exportResolution}
+          onCancel={() => setDownloadSizeOpen(false)}
+          onSelect={(resolution) => void handleDownloadAllMaps(resolution)}
+        />
+      ) : null}
     </main>
   );
 }
