@@ -27,10 +27,22 @@ test("registry defines every node kind exactly once", () => {
     registry.NODE_LIBRARY.map((definition) => definition.kind),
     [
       "color",
+      "value",
       "noise",
+      "checker",
+      "voronoi",
+      "gradient",
+      "brick",
       "levels",
+      "colorRamp",
+      "invert",
+      "threshold",
+      "transform2d",
+      "math",
       "blend",
+      "maskedBlend",
       "channels",
+      "combineChannels",
       "roughness",
       "metallic",
       "normal",
@@ -147,6 +159,20 @@ test("node values normalize by definition and discard unsupported fields", () =>
     { color: "#76706a" },
   );
   assert.deepEqual(
+    registry.normalizeMaterialNodeValues("colorRamp", {
+      colorA: "#112233",
+      colorB: "invalid",
+      midpoint: 2,
+    }),
+    { colorA: "#112233", colorB: "#e8d7b4", midpoint: 0.95 },
+  );
+  assert.deepEqual(
+    registry.normalizeMaterialNodeValues("math", {
+      operation: "unsupported",
+    }),
+    { operation: "multiply" },
+  );
+  assert.deepEqual(
     registry.normalizeMaterialNodeValues("textureMap", {
       mapChannel: "unsupported",
       enabled: "yes",
@@ -158,6 +184,116 @@ test("node values normalize by definition and discard unsupported fields", () =>
       enabled: true,
       thumbnail: "data:image/png;base64,AA==",
     },
+  );
+});
+
+test("new procedural and utility nodes evaluate deterministically", () => {
+  const context = (overrides = {}) => ({
+    u: 0.25,
+    v: 0.75,
+    values: {},
+    sampleInput: () => [0.25, 0.5, 0.75, 1],
+    sampleInputAt: (_port, u, v) => [u, v, 0.5, 1],
+    isInputConnected: () => true,
+    sampleTextureMap: () => [0.5, 0.5, 0.5, 1],
+    ...overrides,
+  });
+
+  const value = registry.getMaterialNodeDefinition("value");
+  assert.deepEqual(value.evaluate(context({ values: { value: 0.3 } })), [0.3, 0.3, 0.3, 1]);
+
+  const checker = registry.getMaterialNodeDefinition("checker");
+  const checkerSample = (u, v) => checker.evaluate(context({ u, v, values: { scale: 8, rotation: 0 } }));
+  assert.deepEqual(checkerSample(0, 0.43), checkerSample(1, 0.43));
+  assert.deepEqual(checkerSample(0.27, 0), checkerSample(0.27, 1));
+
+  const voronoi = registry.getMaterialNodeDefinition("voronoi");
+  const voronoiSample = (u, v, seed = 17) => voronoi.evaluate(context({ u, v, values: { scale: 8, seed, contrast: 1 } }));
+  assert.ok(Math.abs(voronoiSample(0, 0.43)[0] - voronoiSample(1, 0.43)[0]) < 1e-12);
+  assert.ok(Math.abs(voronoiSample(0.27, 0)[0] - voronoiSample(0.27, 1)[0]) < 1e-12);
+  assert.notDeepEqual(voronoiSample(0.25, 0.75), voronoiSample(0.25, 0.75, 18));
+
+  const gradient = registry.getMaterialNodeDefinition("gradient");
+  assert.deepEqual(
+    gradient.evaluate(context({ u: 0.25, v: 0.5, values: { gradientMode: "linear", rotation: 0, scale: 1 } })),
+    [0.25, 0.25, 0.25, 1],
+  );
+  assert.equal(
+    gradient.evaluate(context({ u: 0.5, v: 0.5, values: { gradientMode: "radial", rotation: 0, scale: 1 } }))[0],
+    0,
+  );
+
+  const brick = registry.getMaterialNodeDefinition("brick");
+  const brickSample = (u, v) => brick.evaluate(context({ u, v, values: { columns: 8, rows: 6, mortar: 0.08, stagger: 0.5 } }));
+  assert.deepEqual(brickSample(0, 0.43), brickSample(1, 0.43));
+  assert.deepEqual(brickSample(0.27, 0), brickSample(0.27, 1));
+
+  const colorRamp = registry.getMaterialNodeDefinition("colorRamp");
+  assert.deepEqual(
+    colorRamp.evaluate(context({
+      values: { colorA: "#000000", colorB: "#ffffff", midpoint: 0.5 },
+      sampleInput: () => [0.5, 0.5, 0.5, 1],
+    })),
+    [0.5, 0.5, 0.5, 1],
+  );
+
+  const invert = registry.getMaterialNodeDefinition("invert");
+  assert.deepEqual(
+    invert.evaluate(context({ sampleInput: () => [0.2, 0.4, 0.8, 0.75] })),
+    [0.8, 0.6, 0.19999999999999996, 0.75],
+  );
+
+  const threshold = registry.getMaterialNodeDefinition("threshold");
+  assert.deepEqual(
+    threshold.evaluate(context({ values: { threshold: 0.5, softness: 0 }, sampleInput: () => [0.49, 0.49, 0.49, 1] })),
+    [0, 0, 0, 1],
+  );
+  assert.deepEqual(
+    threshold.evaluate(context({ values: { threshold: 0.5, softness: 0 }, sampleInput: () => [0.5, 0.5, 0.5, 1] })),
+    [1, 1, 1, 1],
+  );
+
+  const transform = registry.getMaterialNodeDefinition("transform2d");
+  assert.deepEqual(
+    transform.evaluate(context({ values: { scaleX: 2, scaleY: 3, offsetX: 0.1, offsetY: -0.2, rotation: 0 } })),
+    [0.1, 1.05, 0.5, 1],
+  );
+
+  const math = registry.getMaterialNodeDefinition("math");
+  assert.deepEqual(
+    math.evaluate(context({
+      values: { operation: "multiply" },
+      sampleInput: (port) => port === "a" ? [0.2, 0.4, 0.6, 1] : [0.5, 0.25, 2, 1],
+    })),
+    [0.1, 0.1, 1.2, 1],
+  );
+  assert.deepEqual(
+    math.evaluate(context({ values: { operation: "absolute" }, sampleInput: () => [-0.2, -0.4, 0.6, 1] })),
+    [0.2, 0.4, 0.6, 1],
+  );
+
+  const maskedBlend = registry.getMaterialNodeDefinition("maskedBlend");
+  assert.deepEqual(
+    maskedBlend.evaluate(context({
+      values: { opacity: 0.5 },
+      sampleInput: (port) => port === "a" ? [0, 0, 0, 1] : port === "b" ? [1, 1, 1, 1] : [0.5, 0.5, 0.5, 1],
+    })),
+    [0.25, 0.25, 0.25, 1],
+  );
+
+  const combine = registry.getMaterialNodeDefinition("combineChannels");
+  assert.deepEqual(
+    combine.evaluate(context({
+      sampleInput: (port) => ({ r: [0.1, 0.1, 0.1, 1], g: [0.2, 0.2, 0.2, 1], b: [0.3, 0.3, 0.3, 1], a: [0.4, 0.4, 0.4, 1] })[port],
+    })),
+    [0.1, 0.2, 0.3, 0.4],
+  );
+  assert.deepEqual(
+    combine.evaluate(context({
+      sampleInput: (port) => ({ r: [0.1, 0.1, 0.1, 1], g: [0.2, 0.2, 0.2, 1], b: [0.3, 0.3, 0.3, 1] })[port],
+      isInputConnected: (port) => port !== "a",
+    })),
+    [0.1, 0.2, 0.3, 1],
   );
 });
 

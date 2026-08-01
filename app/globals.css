@@ -1828,7 +1828,8 @@ input:focus-visible {
 .node-kind-tag--output { color: var(--accent); }
 
 .range-field,
-.color-field {
+.color-field,
+.select-field {
   display: grid;
   align-items: center;
   border-top: 1px solid var(--line-soft);
@@ -1841,7 +1842,8 @@ input:focus-visible {
 }
 
 .range-field__label,
-.color-field > span:first-child {
+.color-field > span:first-child,
+.select-field > span:first-child {
   color: var(--muted);
   font-size: 9px;
 }
@@ -2161,6 +2163,23 @@ input[type="range"]::-webkit-slider-thumb {
 .material-preview--viewer .material-preview__hint {
   right: 20px;
   bottom: 18px;
+}
+
+.select-field {
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 8px;
+  min-height: 38px;
+}
+
+.select-field select {
+  min-width: 0;
+  height: 28px;
+  padding: 0 7px;
+  color: #dce1e4;
+  background: #171d22;
+  border: 1px solid #354049;
+  border-radius: 4px;
+  font-size: 9px;
 }
 
 .material-preview--viewer .material-preview__mapping-tools {

@@ -33,6 +33,7 @@ import {
   saveProjectLocal,
 } from "../core/material-persistence";
 import { useMaterialEvaluation } from "../core/use-material-evaluation";
+import { getMaterialNodeDefinition } from "../core/material-node-registry";
 import {
   DEFAULT_MAP_SETTINGS,
   createStarterProject,
@@ -124,56 +125,67 @@ function ViewerNodeEditor({
   onUpdate: (values: Partial<NodeValueMap>) => void;
 }) {
   const values = node.data.values;
+  const definition = getMaterialNodeDefinition(node.data.kind);
   return (
     <div className="viewer-node-editor">
-      {node.data.kind === "color" ? (
-        <label className="color-field">
-          <span>Color</span>
-          <span className="color-field__control">
-            <input
-              type="color"
-              value={values.color ?? "#808080"}
-              onChange={(event) => onUpdate({ color: event.target.value })}
-            />
-            <code>{values.color ?? "#808080"}</code>
-          </span>
-        </label>
-      ) : null}
-
-      {node.data.kind === "noise" ? (
-        <>
-          <ViewerRangeField label="Scale" value={values.scale ?? 8} min={1} max={32} step={1} onChange={(scale) => onUpdate({ scale })} />
-          <ViewerRangeField label="Contrast" value={values.contrast ?? 0.5} min={0} max={1} step={0.01} onChange={(contrast) => onUpdate({ contrast })} />
-          <ViewerRangeField label="Seed" value={values.seed ?? 1} min={1} max={100} step={1} onChange={(seed) => onUpdate({ seed })} />
-        </>
-      ) : null}
-
-      {node.data.kind === "levels" ? (
-        <>
-          <ViewerRangeField label="Black point" value={values.minimum ?? 0} min={0} max={0.95} step={0.01} onChange={(minimum) => onUpdate({ minimum })} />
-          <ViewerRangeField label="White point" value={values.maximum ?? 1} min={0.05} max={1} step={0.01} onChange={(maximum) => onUpdate({ maximum })} />
-          <ViewerRangeField label="Gamma" value={values.gamma ?? 1} min={0.2} max={3} step={0.01} onChange={(gamma) => onUpdate({ gamma })} />
-        </>
-      ) : null}
-
-      {node.data.kind === "blend" ? (
-        <ViewerRangeField label="Opacity" value={values.opacity ?? 0.5} min={0} max={1} step={0.01} onChange={(opacity) => onUpdate({ opacity })} />
-      ) : null}
-
-      {node.data.kind === "roughness" || node.data.kind === "metallic" ? (
-        <ViewerRangeField
-          label={node.data.kind === "roughness" ? "Roughness" : "Metalness"}
-          value={values.value ?? 0.5}
-          min={0}
-          max={1}
-          step={0.01}
-          onChange={(value) => onUpdate({ value })}
-        />
-      ) : null}
-
-      {node.data.kind === "normal" ? (
-        <ViewerRangeField label="Strength" value={values.strength ?? 1} min={0} max={4} step={0.01} onChange={(strength) => onUpdate({ strength })} />
-      ) : null}
+      {definition.parameters.map((parameter) =>
+        parameter.control === "color" ? (
+          <label className="color-field" key={parameter.key}>
+            <span>{parameter.label}</span>
+            <span className="color-field__control">
+              <input
+                type="color"
+                value={
+                  typeof values[parameter.key] === "string"
+                    ? values[parameter.key]
+                    : parameter.defaultValue
+                }
+                onChange={(event) =>
+                  onUpdate({ [parameter.key]: event.target.value })
+                }
+              />
+              <code>
+                {typeof values[parameter.key] === "string"
+                  ? values[parameter.key]
+                  : parameter.defaultValue}
+              </code>
+            </span>
+          </label>
+        ) : parameter.control === "select" ? (
+          <label className="select-field" key={parameter.key}>
+            <span>{parameter.label}</span>
+            <select
+              value={
+                typeof values[parameter.key] === "string"
+                  ? values[parameter.key]
+                  : parameter.defaultValue
+              }
+              onChange={(event) =>
+                onUpdate({ [parameter.key]: event.target.value })
+              }
+            >
+              {parameter.options.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : (
+          <ViewerRangeField
+            key={parameter.key}
+            label={parameter.label}
+            value={
+              (values[parameter.key] as number | undefined) ??
+              parameter.defaultValue
+            }
+            min={parameter.min}
+            max={parameter.max}
+            step={parameter.step}
+            onChange={(value) => onUpdate({ [parameter.key]: value })}
+          />
+        ),
+      )}
     </div>
   );
 }

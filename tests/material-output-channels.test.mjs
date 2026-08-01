@@ -224,3 +224,27 @@ test("generated texture maps flow through the compiled graph at source dimension
   assert.equal(result.metallicValue, 0.5);
   assert.deepEqual(result.warnings, []);
 });
+
+test("Transform 2D resamples its upstream graph at transformed UV coordinates", () => {
+  const nodes = [
+    node("checker", "checker", { scale: 2, rotation: 0 }),
+    node("transform", "transform2d", {
+      scaleX: 1,
+      scaleY: 1,
+      offsetX: 0.25,
+      offsetY: 0,
+      rotation: 0,
+    }),
+  ];
+  const edges = [
+    edge("checker-transform", "checker", "out", "transform", "in"),
+  ];
+
+  const transformed = evaluator.evaluateNodeMap(
+    { nodes, edges },
+    "transform",
+    4,
+  );
+
+  assert.deepEqual(firstChannels(transformed).slice(0, 4), [0, 255, 255, 0]);
+});

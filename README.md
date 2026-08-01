@@ -4,7 +4,7 @@ Forge is a local-first procedural PBR material authoring prototype for game-prod
 
 ## Included in this slice
 
-- Editable React Flow material graph with deterministic color, tileable cloud noise, levels, blend, normal-from-height, roughness, metallic, and PBR output nodes.
+- Editable React Flow material graph with scalar and color inputs; tileable cloud, checker, Voronoi, gradient, and brick generators; color-ramp, invert, threshold, transform, math, channel, blend, and normal utilities; plus roughness, metallic, and PBR output nodes.
 - Local albedo import for PNG, JPEG, and WebP files with non-destructive generation of height, normal, roughness, metallic, and ambient-occlusion maps.
 - A six-map workbench with per-map controls, individual PNG downloads, source-aspect preservation, and 512/1024/2048 export sizes.
 - Live sphere, cube, and plane preview with beauty and individual-channel inspection.

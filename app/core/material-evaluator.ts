@@ -103,6 +103,54 @@ function normalizeNodeOutputs(
   return result as MaterialNodeOutputMap;
 }
 
+function evaluateSourceAt(
+  compiledGraph: CompiledMaterialGraph,
+  source: MaterialGraphSource | undefined,
+  u: number,
+  v: number,
+  textureInputs: MaterialEvaluation | undefined,
+  visiting = new Set<string>(),
+): MaterialNodeSample {
+  if (!source || visiting.has(source.nodeId)) return DEFAULT_SAMPLE;
+  const node = compiledGraph.nodesById.get(source.nodeId);
+  if (!node) return DEFAULT_SAMPLE;
+  const definition = getMaterialNodeDefinition(node.data.kind);
+  if (!definition.evaluate || !definition.outputs.length) return DEFAULT_SAMPLE;
+
+  const nextVisiting = new Set(visiting);
+  nextVisiting.add(source.nodeId);
+  const inputSource = (portId: string) =>
+    compiledGraph.inputSourceFor(source.nodeId, portId);
+  const result = definition.evaluate({
+    u,
+    v,
+    values: node.data.values,
+    sampleInput: (portId) =>
+      evaluateSourceAt(
+        compiledGraph,
+        inputSource(portId),
+        u,
+        v,
+        textureInputs,
+        nextVisiting,
+      ),
+    sampleInputAt: (portId, sampleU, sampleV) =>
+      evaluateSourceAt(
+        compiledGraph,
+        inputSource(portId),
+        sampleU,
+        sampleV,
+        textureInputs,
+        nextVisiting,
+      ),
+    isInputConnected: (portId) => Boolean(inputSource(portId)),
+    sampleTextureMap: (channel) =>
+      sampleTextureMap(textureInputs, channel, u, v),
+  });
+  return normalizeNodeOutputs(definition.outputs[0]?.id, result)[source.portId]
+    ?? DEFAULT_SAMPLE;
+}
+
 function evaluatePlanAt(
   plan: MaterialEvaluationPlan,
   u: number,
@@ -116,6 +164,8 @@ function evaluatePlanAt(
     if (!node) continue;
     const definition = getMaterialNodeDefinition(node.data.kind);
     if (!definition.evaluate || !definition.outputs.length) continue;
+    const inputSource = (portId: string) =>
+      plan.compiledGraph.inputSourceFor(nodeId, portId);
     const result = definition.evaluate({
       u,
       v,
@@ -123,8 +173,17 @@ function evaluatePlanAt(
       sampleInput: (portId) =>
         sampleEvaluatedSource(
           evaluated,
-          plan.compiledGraph.inputSourceFor(nodeId, portId),
+          inputSource(portId),
         ),
+      sampleInputAt: (portId, sampleU, sampleV) =>
+        evaluateSourceAt(
+          plan.compiledGraph,
+          inputSource(portId),
+          sampleU,
+          sampleV,
+          textureInputs,
+        ),
+      isInputConnected: (portId) => Boolean(inputSource(portId)),
       sampleTextureMap: (channel) =>
         sampleTextureMap(textureInputs, channel, u, v),
     });

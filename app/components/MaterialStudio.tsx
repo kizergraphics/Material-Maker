@@ -373,10 +373,22 @@ function evaluateGraphNodeMapsInWorker(
 
 const nodeHelp = [
   { name: "Base color", purpose: "Sets the surface color. Use it as a solid starting layer or as one side of a blend." },
+  { name: "Value", purpose: "Provides a reusable grayscale value for masks, math operations, roughness, metallic, height, and AO." },
   { name: "Cloud noise", purpose: "Creates soft, layered cloud variation without a blocky grid pattern. Use Scale for feature size and Seed for a new pattern." },
+  { name: "Checker", purpose: "Creates a crisp tileable checker mask with adjustable tile count and rotation." },
+  { name: "Voronoi cells", purpose: "Creates tileable cellular distances for stone, scales, hammered surfaces, and cracked masks." },
+  { name: "Gradient", purpose: "Creates linear, radial, or angular grayscale transitions for directional masks and falloffs." },
+  { name: "Brick", purpose: "Creates a tileable running-bond brick mask with adjustable rows, columns, mortar, and stagger." },
   { name: "Levels", purpose: "Remaps dark, mid, and bright values. Use it to sharpen masks or control how much of a noise pattern appears." },
+  { name: "Color ramp", purpose: "Maps a grayscale input between two chosen colors with an adjustable midpoint." },
+  { name: "Invert", purpose: "Reverses color or grayscale values while preserving alpha." },
+  { name: "Threshold", purpose: "Turns an input into a hard or feathered black-and-white mask." },
+  { name: "Transform 2D", purpose: "Tiles, offsets, and rotates any upstream texture or procedural pattern." },
+  { name: "Math", purpose: "Adds, subtracts, multiplies, divides, compares, powers, or takes the absolute value of inputs." },
   { name: "Blend", purpose: "Mixes two inputs. Connect a base surface to Base and scratches, dirt, or noise to Blend." },
+  { name: "Masked blend", purpose: "Mixes two inputs using a connected grayscale mask and an overall opacity control." },
   { name: "Split channels", purpose: "Breaks a color stream into red, green, blue, and alpha scalar outputs for masks or packed-map workflows." },
+  { name: "Combine channels", purpose: "Reassembles red, green, blue, and optional alpha scalars into a color stream." },
   { name: "Roughness", purpose: "Controls reflection sharpness. Low values look polished; high values look matte or chalky." },
   { name: "Metallic", purpose: "Separates metal from non-metal. Use 1 for bare metal and 0 for paint, stone, wood, or plastic." },
   { name: "Normal from height", purpose: "Turns grayscale height detail into surface direction. Increase Strength carefully to avoid inflated detail." },
@@ -565,6 +577,26 @@ function NodeInspector({ node }: { node: MaterialGraphNode | null }) {
                   : parameter.defaultValue}
               </code>
             </span>
+          </label>
+        ) : parameter.control === "select" ? (
+          <label className="select-field" key={parameter.key}>
+            <span>{parameter.label}</span>
+            <select
+              value={
+                typeof values[parameter.key] === "string"
+                  ? values[parameter.key]
+                  : parameter.defaultValue
+              }
+              onChange={(event) =>
+                update({ [parameter.key]: event.target.value })
+              }
+            >
+              {parameter.options.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
           </label>
         ) : (
           <RangeField
