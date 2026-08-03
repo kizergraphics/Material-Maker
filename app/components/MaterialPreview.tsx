@@ -274,7 +274,7 @@ class TriPlanarPBRPlugin extends MaterialPluginBase {
   }
 }
 
-const PRIMARY_PREVIEW_MODEL = "/models/material-maker-primary.fbx";
+const PRIMARY_PREVIEW_MODEL = "/models/preview-ball.fbx";
 
 type PreviewMeshGroup = {
   root: TransformNode;
@@ -308,7 +308,7 @@ async function createPrimaryPreviewMesh(scene: Scene) {
   const result = await SceneLoader.ImportMeshAsync(
     null,
     "/models/",
-    "material-maker-primary.fbx",
+    "preview-ball.fbx",
     scene,
   );
   const importedMeshes = result.meshes.filter(

@@ -207,7 +207,7 @@ test("keeps persistence local and creates only the PBR output node", async () =>
     /super\(material,\s*"seamless-triplanar",\s*200,\s*\{\},\s*false,\s*false,\s*true\);[\s\S]*this\.textures = textures;[\s\S]*this\._pluginManager\._addPlugin\(this\);[\s\S]*this\._enable\(true\);/,
   );
   assert.match(preview, /SEAMLESS TRI-PLANAR/);
-  assert.match(preview, /material-maker-primary\.fbx/);
+  assert.match(preview, /preview-ball\.fbx/);
   assert.match(preview, /SceneLoader\.ImportMeshAsync/);
   assert.match(preview, /primary-preview-root/);
   assert.doesNotMatch(preview, /Mesh\.MergeMeshes/);
