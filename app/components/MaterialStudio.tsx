@@ -376,30 +376,42 @@ function evaluateGraphNodeMapsInWorker(
   });
 }
 
+const nodeHelpGroups = ["Inputs & output", "Generators", "Filters", "Blending"] as const;
+
 const nodeHelp = [
-  { name: "Base color", purpose: "Sets the surface color. Use it as a solid starting layer or as one side of a blend." },
-  { name: "Value", purpose: "Provides a reusable grayscale value for masks, math operations, roughness, metallic, height, and AO." },
-  { name: "Cloud noise", purpose: "Creates soft, layered cloud variation without a blocky grid pattern. Use Scale for feature size and Seed for a new pattern." },
-  { name: "Checker", purpose: "Creates a crisp tileable checker mask with adjustable tile count and rotation." },
-  { name: "Voronoi cells", purpose: "Creates tileable cellular distances for stone, scales, hammered surfaces, and cracked masks." },
-  { name: "Gradient", purpose: "Creates linear, radial, or angular grayscale transitions for directional masks and falloffs." },
-  { name: "Brick", purpose: "Creates a tileable running-bond brick mask with adjustable rows, columns, mortar, and stagger." },
-  { name: "Levels", purpose: "Remaps dark, mid, and bright values. Use it to sharpen masks or control how much of a noise pattern appears." },
-  { name: "Color ramp", purpose: "Maps a grayscale input between two chosen colors with an adjustable midpoint." },
-  { name: "Invert", purpose: "Reverses color or grayscale values while preserving alpha." },
-  { name: "Threshold", purpose: "Turns an input into a hard or feathered black-and-white mask." },
-  { name: "Transform 2D", purpose: "Tiles, offsets, and rotates any upstream texture or procedural pattern." },
-  { name: "Math", purpose: "Adds, subtracts, multiplies, divides, compares, powers, or takes the absolute value of inputs." },
-  { name: "Blend", purpose: "Mixes two inputs. Connect a base surface to Base and scratches, dirt, or noise to Blend." },
-  { name: "Masked blend", purpose: "Mixes two inputs using a connected grayscale mask and an overall opacity control." },
-  { name: "Split channels", purpose: "Breaks a color stream into red, green, blue, and alpha scalar outputs for masks or packed-map workflows." },
-  { name: "Combine channels", purpose: "Reassembles red, green, blue, and optional alpha scalars into a color stream." },
-  { name: "Roughness", purpose: "Controls reflection sharpness. Low values look polished; high values look matte or chalky." },
-  { name: "Metallic", purpose: "Separates metal from non-metal. Use 1 for bare metal and 0 for paint, stone, wood, or plastic." },
-  { name: "Normal from height", purpose: "Turns grayscale height detail into surface direction. Increase Strength carefully to avoid inflated detail." },
-  { name: "Generated map", purpose: "Represents a map sent from Map Lab. Enabled generated maps connect directly to the matching material input." },
-  { name: "PBR material", purpose: "The final output. Connect color, normal, roughness, metallic, height, and AO here for preview and export." },
-];
+  { group: "Inputs & output", name: "Base color", purpose: "Supplies a solid sRGB color.", uses: "paint, stone, plastic, tint layers, or either side of a blend" },
+  { group: "Inputs & output", name: "Value", purpose: "Supplies one reusable grayscale value.", uses: "constant masks, math operands, roughness, metallic, height, or AO" },
+  { group: "Inputs & output", name: "Roughness", purpose: "Sets reflection sharpness: low is polished and high is matte.", uses: "wet surfaces, chalk, rubber, brushed metal, or a baseline before adding variation" },
+  { group: "Inputs & output", name: "Metallic", purpose: "Separates metal from dielectric material.", uses: "1 for exposed metal; 0 for paint, stone, wood, fabric, or plastic" },
+  { group: "Inputs & output", name: "Generated map", purpose: "Keeps a Map Lab output linked to the current source image and settings.", uses: "starting an image-driven graph, replacing individual channels, or disabling maps you do not need" },
+  { group: "Inputs & output", name: "PBR material", purpose: "Collects the final channels used by the live preview and exports.", uses: "base color, normal, roughness, metallic, height, and ambient occlusion" },
+  { group: "Generators", name: "Cloud noise", purpose: "Builds soft, layered, tileable variation.", uses: "clouds, plaster, dirt, mottled roughness, pores, or broad height breakup" },
+  { group: "Generators", name: "Checker", purpose: "Builds a crisp, tileable checker mask.", uses: "floor tiles, woven patterns, alternating panels, UV checks, or stylized pixels" },
+  { group: "Generators", name: "Voronoi cells", purpose: "Builds tileable cellular distance fields.", uses: "stone cells, scales, hammered metal, dried mud, cracks, or island masks" },
+  { group: "Generators", name: "Gradient", purpose: "Builds linear, radial, or angular grayscale falloffs.", uses: "edge fades, directional wear, circular masks, sweeps, or anisotropic color bands" },
+  { group: "Generators", name: "Brick", purpose: "Builds a running-bond brick mask with controllable mortar and stagger.", uses: "brick walls, masonry blocks, subway tile, paving, or staggered panels" },
+  { group: "Filters", name: "Levels", purpose: "Remaps black, midpoint, and white values.", uses: "tightening masks, lifting shadows, crushing highlights, or controlling pattern coverage" },
+  { group: "Filters", name: "Color ramp", purpose: "Maps grayscale values between two colors.", uses: "turning noise into stone, terrain, rust, painted variation, or two-tone patterns" },
+  { group: "Filters", name: "Invert", purpose: "Reverses color or grayscale while preserving alpha.", uses: "switching cracks to stones, mortar to bricks, cavities to peaks, or black/white masks" },
+  { group: "Filters", name: "Threshold", purpose: "Turns an input into a hard or feathered mask.", uses: "chips, islands, grout, decals, binary material regions, or softened selections" },
+  { group: "Filters", name: "Transform 2D", purpose: "Tiles, offsets, and rotates an upstream texture or pattern.", uses: "changing scale, aligning layers, breaking repetition, or rotating directional detail" },
+  { group: "Filters", name: "Math", purpose: "Combines values with arithmetic, min/max, power, or absolute operations.", uses: "strengthening masks, multiplying detail, cutting regions, clamping overlaps, or reshaping contrast" },
+  { group: "Filters", name: "Split channels", purpose: "Breaks a color stream into R, G, B, and A scalar outputs.", uses: "reading packed maps, isolating a color channel, or reusing one texture as several masks" },
+  { group: "Filters", name: "Combine channels", purpose: "Packs scalar inputs into one RGBA color stream.", uses: "ORM/RMA packed textures, custom mask atlases, or recombining edited channels" },
+  { group: "Filters", name: "Normal from height", purpose: "Derives tangent-space surface direction from grayscale height.", uses: "scratches, grout, pores, stamped patterns, or generated relief without extra geometry" },
+  { group: "Blending", name: "Blend", purpose: "Mixes two streams with a single opacity control.", uses: "layering color variation, dirt, scratches, noise, or two procedural patterns" },
+  { group: "Blending", name: "Masked blend", purpose: "Mixes two streams through a third grayscale mask.", uses: "paint over metal, moss on stone, grout between bricks, edge wear, or selective decals" },
+] as const;
+
+const graphRecipes = [
+  { name: "Procedural stone", steps: "Voronoi -> Levels -> Color ramp -> Base color. Reuse the Levels output through Normal from height for relief." },
+  { name: "Brick wall", steps: "Brick -> Color ramp -> Base color. Invert the Brick mask for mortar, then feed a softened copy into Height or AO." },
+  { name: "Painted metal", steps: "Blend paint and metal colors with a chipped Threshold mask. Send that same mask to Metallic so exposed areas read as metal." },
+  { name: "Weathered surface", steps: "Cloud noise -> Levels -> Masked blend. Reuse the mask at lower contrast in Roughness and through Normal from height." },
+  { name: "Directional wear", steps: "Gradient -> Transform 2D -> Math with noise. Use the result as a mask for dust, fading, leaks, or edge-darkening." },
+  { name: "Packed game texture", steps: "Feed AO, roughness, and metallic scalars into Combine channels. Use Split channels to inspect or edit a packed texture later." },
+  { name: "Image-to-material", steps: "Generate maps in Map Lab, choose the enabled channels, then select Send maps to graph. Add filters between generated maps and PBR material." },
+] as const;
 
 function GraphHelpPanel({ onClose }: { onClose: () => void }) {
   return (
@@ -408,15 +420,26 @@ function GraphHelpPanel({ onClose }: { onClose: () => void }) {
         <div><span className="eyebrow">Graph guide</span><h2>Nodes & recipes</h2></div>
         <button className="icon-button" onClick={onClose} aria-label="Close graph help"><X size={15} /></button>
       </header>
-      <p className="graph-help-intro">Connect nodes from left to right. Drag from an output dot to a labeled input on another node.</p>
-      <div className="graph-help-node-list">
-        {nodeHelp.map((item) => <section key={item.name}><strong>{item.name}</strong><p>{item.purpose}</p></section>)}
-      </div>
-      <div className="graph-help-recipes">
-        <span className="eyebrow">Quick recipes</span>
-        <section><strong>Weathered metal</strong><p>Color + Noise → Blend → Base color. Noise → Levels → Normal. Add high Metallic and medium Roughness.</p></section>
-        <section><strong>Painted surface</strong><p>Blend a paint color with subtle noise. Keep Metallic at 0 and use Roughness around 0.55–0.8.</p></section>
-        <section><strong>Image workflow</strong><p>Create maps in Map Lab, choose which maps are enabled, then use “Send maps to graph.”</p></section>
+      <div className="graph-help-content">
+        <p className="graph-help-intro">Build from left to right: generators and inputs create data, filters reshape it, blends combine it, and PBR material collects the final channels. Drag an output dot to a compatible labeled input.</p>
+        <div className="graph-help-node-list">
+          {nodeHelpGroups.map((group) => (
+            <div className="graph-help-node-group" key={group}>
+              <span className="eyebrow">{group}</span>
+              {nodeHelp.filter((item) => item.group === group).map((item) => (
+                <section key={item.name}>
+                  <strong>{item.name}</strong>
+                  <p>{item.purpose}</p>
+                  <small><b>Try it for:</b> {item.uses}.</small>
+                </section>
+              ))}
+            </div>
+          ))}
+        </div>
+        <div className="graph-help-recipes">
+          <span className="eyebrow">Quick recipes</span>
+          {graphRecipes.map((recipe) => <section key={recipe.name}><strong>{recipe.name}</strong><p>{recipe.steps}</p></section>)}
+        </div>
       </div>
     </aside>
   );
@@ -925,6 +948,8 @@ function StudioWorkspace() {
 
   useEffect(() => {
     let active = true;
+    // This client-only capability check intentionally updates the status label after mount.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if ("gpu" in navigator) setRendererLabel("WebGPU available");
     Promise.all([
       loadProjectsLocal(),
@@ -1000,12 +1025,15 @@ function StudioWorkspace() {
   }, [hydrated]);
 
   useEffect(() => {
-    if (sourceTexture) setWorkspaceView("maps");
-    else setWorkspaceView("graph");
+    // Importing or removing a source texture deliberately changes the active workspace.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setWorkspaceView(sourceTexture ? "maps" : "graph");
   }, [sourceTexture]);
 
   useEffect(() => {
     if (!hydrated || !hasActiveProject) return;
+    // The save indicator reflects the lifecycle of this debounced persistence effect.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSaveState("saving");
     const timeout = window.setTimeout(() => {
       saveProjectLocal(useMaterialStore.getState().toProject())
