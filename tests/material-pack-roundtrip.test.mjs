@@ -79,6 +79,7 @@ const generatedCacheStub = moduleUrl(`
 `);
 const localDatabaseStub = moduleUrl(`
   export const PROJECT_STORE = "projects";
+  export const PREFERENCE_STORE = "preferences";
   export async function openMaterialDatabase() {
     throw new Error("Database access is not available in this test.");
   }
@@ -139,7 +140,10 @@ const {
 } = persistenceImport.module;
 const evaluatorStubModule = await import(evaluatorStub);
 const textureGeneratorStubModule = await import(textureGeneratorStub);
-const { getExportDimensions } = materialTypesImport.module;
+const {
+  DEFAULT_PREVIEW_SCENE_SETTINGS,
+  getExportDimensions,
+} = materialTypesImport.module;
 
 test("export dimensions preserve aspect ratio and identify upscaling", () => {
   const wideSource = { width: 1500, height: 997 };
@@ -207,6 +211,16 @@ test("local storage preparation preserves graph connections and node positions",
       showGrid: true,
       autoRotate: true,
       tiled: true,
+      scene: {
+        ...structuredClone(DEFAULT_PREVIEW_SCENE_SETTINGS),
+        modelHeight: 1.25,
+        ground: {
+          ...structuredClone(DEFAULT_PREVIEW_SCENE_SETTINGS.ground),
+          material: "library",
+          materialProjectId: "saved-floor-project",
+          reflection: 1.1,
+        },
+      },
     },
     sourceTexture: null,
     mapSettings: {
@@ -239,6 +253,13 @@ test("local storage preparation preserves graph connections and node positions",
     },
   ]);
   assert.equal("selected" in stored.nodes[0], false);
+  assert.equal(stored.preview.scene.modelHeight, 1.25);
+  assert.equal(stored.preview.scene.ground.material, "library");
+  assert.equal(
+    stored.preview.scene.ground.materialProjectId,
+    "saved-floor-project",
+  );
+  assert.equal(stored.preview.scene.ground.reflection, 1.1);
 });
 
 test("individual map preparation uses the selected export resolution", async () => {
@@ -440,6 +461,7 @@ test("legacy material packs migrate, normalize, export, and re-import", async ()
   const imported = await importMaterialPack(legacyBytes);
 
   assert.equal(imported.schemaVersion, 4);
+  assert.deepEqual(imported.preview.scene, DEFAULT_PREVIEW_SCENE_SETTINGS);
   assert.equal(imported.nodes.find(({ id }) => id === "noise").data.category, "generator");
   assert.deepEqual(
     imported.nodes.find(({ id }) => id === "levels").data.values,
@@ -469,5 +491,6 @@ test("legacy material packs migrate, normalize, export, and re-import", async ()
   assert.deepEqual(reimported.nodes, imported.nodes);
   assert.deepEqual(reimported.edges, imported.edges);
   assert.deepEqual(reimported.mapSettings, imported.mapSettings);
+  assert.deepEqual(reimported.preview, imported.preview);
   assert.equal(reimported.exportResolution, imported.exportResolution);
 });

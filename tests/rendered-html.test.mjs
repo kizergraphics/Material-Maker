@@ -150,12 +150,16 @@ test("keeps persistence local and creates only the PBR output node", async () =>
   ]);
   assert.match(localDatabase, /indexedDB\.open/);
   assert.match(localDatabase, /GENERATED_MAP_CACHE_STORE/);
+  assert.match(localDatabase, /PREFERENCE_STORE\s*=\s*"preferences"/);
+  assert.match(localDatabase, /DB_VERSION\s*=\s*3/);
   assert.match(localDatabase, /createIndex\("createdAt",\s*"createdAt"\)/);
   assert.match(persistence, /privacy:\s*"local-only"/);
   assert.match(persistence, /textures\/height\.png/);
   assert.match(persistence, /textures\/ambient-occlusion\.png/);
   assert.match(persistence, /deleteProjectLocal/);
   assert.match(persistence, /loadProjectsLocal/);
+  assert.match(persistence, /savePreviewFloorPreference/);
+  assert.match(persistence, /loadPreviewFloorPreference/);
   assert.match(persistence, /prepareProjectForStorage\(project\)/);
   assert.match(persistence, /objectStore\(PROJECT_STORE\)\.put\(storedProject\)/);
   assert.match(persistence, /MAX_ZIP_TOTAL_BYTES/);
@@ -189,9 +193,15 @@ test("keeps persistence local and creates only the PBR output node", async () =>
     /previewResolutionLabel\(evaluation\.width, evaluation\.height\)/,
   );
   assert.match(preview, /useAmbientOcclusionFromMetallicTextureRed = true/);
+  assert.match(preview, /useRoughnessFromMetallicTextureAlpha = false/);
   assert.match(preview, /useRoughnessFromMetallicTextureGreen = true/);
   assert.match(preview, /useMetallnessFromMetallicTextureBlue = true/);
+  assert.match(preview, /packNormalHeightTexture/);
+  assert.match(preview, /pbr\.useParallax = materialHeightDepth > 0/);
+  assert.match(preview, /pbr\.useParallaxOcclusion = false/);
+  assert.match(preview, /pbr\.parallaxScaleBias = materialHeightDepth/);
   assert.match(preview, /pbr\.bumpTexture = normal\.texture/);
+  assert.match(mapLab, /Surface depth/);
   assert.match(
     preview,
     /super\(material,\s*"seamless-triplanar",\s*200,\s*\{\},\s*false,\s*false,\s*true\);[\s\S]*this\.textures = textures;[\s\S]*this\._pluginManager\._addPlugin\(this\);[\s\S]*this\._enable\(true\);/,
@@ -221,6 +231,11 @@ test("keeps persistence local and creates only the PBR output node", async () =>
     /existingOutput\s*\?\?\s*\{[\s\S]*?id:\s*"material-output"[\s\S]*?data:\s*createMaterialNodeData\("output"\)[\s\S]*?\(existingOutput\s*\?\s*\[\]\s*:\s*\[output\]\)/,
   );
   assert.match(store, /function ensureMaterialOutput/);
+  assert.match(store, /setPersistentPreviewFloor/);
+  assert.match(
+    store,
+    /replaceProject:[\s\S]*?ground:\s*structuredClone\(state\.preview\.scene\.ground\)/,
+  );
   assert.match(
     store,
     /change\.type === "remove"\s*&&\s*outputIds\.has\(change\.id\)/,
@@ -287,6 +302,13 @@ test("keeps persistence local and creates only the PBR output node", async () =>
   assert.match(evaluationHook, /Promise\.resolve\(\)\.then\(evaluateInWorker\)/);
   assert.match(evaluationHook, /getPersistentGeneratedMaps/);
   assert.match(evaluationHook, /storePersistentGeneratedMaps/);
+  assert.match(evaluationHook, /function changedMapChannels/);
+  assert.match(
+    evaluationHook,
+    /changed\.has\("height"\)[\s\S]*?changed\.add\("normal"\)[\s\S]*?changed\.add\("ao"\)/,
+  );
+  assert.match(studio, /Tile \{preview\.uvTiling\}×/);
+  assert.match(studio, /aria-pressed=\{preview\.channel === item\.id\}/);
   assert.match(textureGenerator, /fingerprintSourceFile/);
   assert.match(generatedMapCache, /GENERATION_ALGORITHM_VERSION/);
   assert.match(generatedMapCache, /MAX_PERSISTENT_CACHE_ENTRIES\s*=\s*3/);

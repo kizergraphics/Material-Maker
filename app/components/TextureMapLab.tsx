@@ -183,7 +183,7 @@ function MapRangeField({
         value={value}
         onChange={(event) => onChange(Number(event.target.value))}
       />
-      <output>{value.toFixed(step < 1 ? 2 : 0)}{suffix}</output>
+      <output>{value.toFixed(step < 0.01 ? 3 : step < 1 ? 2 : 0)}{suffix}</output>
     </label>
   );
 }
@@ -362,6 +362,7 @@ export function TextureMapInspector({
       {channel === "height" ? (
         <>
           <ToggleField label="Use this map" checked={settings.height.enabled} onChange={(value) => update("height", "enabled", value)} />
+          <MapRangeField label="Surface depth" value={settings.height.depth} min={0} max={0.04} step={0.001} onChange={(value) => update("height", "depth", value)} />
           <MapRangeField label="Contrast" value={settings.height.contrast} min={0.1} max={3} step={0.01} onChange={(value) => update("height", "contrast", value)} />
           <MapRangeField label="Midpoint" value={settings.height.bias} min={-0.5} max={0.5} step={0.01} onChange={(value) => update("height", "bias", value)} />
           <MapRangeField label="Blur" value={settings.height.blur} min={0} max={8} step={1} suffix="px" onChange={(value) => update("height", "blur", value)} />

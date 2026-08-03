@@ -12,6 +12,7 @@ import {
   RotateCw,
   Save,
   ShieldCheck,
+  SlidersHorizontal,
   Square,
   Trash2,
   Upload,
@@ -29,19 +30,23 @@ import {
   deleteProjectLocal,
   getCachedProjectMapBlob,
   importMaterialPack,
+  loadPreviewFloorPreference,
   loadProjectsLocal,
+  savePreviewFloorPreference,
   saveProjectLocal,
 } from "../core/material-persistence";
 import { useMaterialEvaluation } from "../core/use-material-evaluation";
 import { getMaterialNodeDefinition } from "../core/material-node-registry";
 import {
   DEFAULT_MAP_SETTINGS,
+  DEFAULT_PREVIEW_SCENE_SETTINGS,
   createStarterProject,
   type MapGenerationSettings,
   type MaterialGraphNode,
   type MaterialProject,
   type NodeValueMap,
   type PreviewChannel,
+  type PreviewSceneSettings,
   type PreviewShape,
   type TextureMapChannel,
 } from "../core/material-types";
@@ -50,6 +55,9 @@ import {
   DeferredTextureMapCanvas,
   DeferredTextureMapInspector,
 } from "./DeferredMaterialTools";
+import { PreviewSceneControls } from "./PreviewSceneControls";
+
+const FLOOR_EVALUATION_FALLBACK = createStarterProject();
 
 const channels: Array<{ id: PreviewChannel; label: string }> = [
   { id: "material", label: "Beauty" },
@@ -75,6 +83,22 @@ const textureChannels: Array<{
 ];
 
 type ViewerPreviewResolution = 256 | 512 | 1024 | 2048;
+
+function withPersistentFloor(
+  project: MaterialProject,
+  ground: PreviewSceneSettings["ground"],
+) {
+  return {
+    ...project,
+    preview: {
+      ...project.preview,
+      scene: {
+        ...project.preview.scene,
+        ground: structuredClone(ground),
+      },
+    },
+  };
+}
 
 const viewerPreviewResolutions: Array<{
   value: ViewerPreviewResolution;
@@ -192,6 +216,9 @@ function ViewerNodeEditor({
 
 export function MaterialViewerClient() {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const persistentFloorRef = useRef(
+    structuredClone(DEFAULT_PREVIEW_SCENE_SETTINGS.ground),
+  );
   const [project, setProject] = useState<MaterialProject>(() => createStarterProject());
   const [channel, setChannel] = useState<PreviewChannel>("material");
   const [shape, setShape] = useState<PreviewShape>("sphere");
@@ -201,12 +228,38 @@ export function MaterialViewerClient() {
   const [notice, setNotice] = useState("Example material loaded");
   const [savedProjects, setSavedProjects] = useState<MaterialProject[]>([]);
   const [editorNodeId, setEditorNodeId] = useState("");
+  const [isSceneSettingsOpen, setSceneSettingsOpen] = useState(false);
   const [previewResolution, setPreviewResolution] =
     useState<ViewerPreviewResolution>(256);
   const evaluationMaxEdge = project.sourceTexture ? previewResolution : 256;
   const { evaluation, isGenerating } = useMaterialEvaluation(
     project,
     evaluationMaxEdge,
+  );
+  const selectedFloorProject = useMemo(
+    () => project.preview.scene.ground.material === "library"
+      ? savedProjects.find(
+          (savedProject) => savedProject.id
+            === project.preview.scene.ground.materialProjectId,
+        )
+      : undefined,
+    [
+      project.preview.scene.ground.material,
+      project.preview.scene.ground.materialProjectId,
+      savedProjects,
+    ],
+  );
+  const { evaluation: savedFloorEvaluation } = useMaterialEvaluation(
+    selectedFloorProject ?? FLOOR_EVALUATION_FALLBACK,
+    256,
+  );
+  const floorLibraryMaterials = useMemo(
+    () => savedProjects
+      .map((savedProject) => ({
+        id: savedProject.id,
+        name: savedProject.name,
+      })),
+    [savedProjects],
   );
   const previewResolutionLabel =
     viewerPreviewResolutions.find(
@@ -224,13 +277,25 @@ export function MaterialViewerClient() {
 
   useEffect(() => {
     let active = true;
-    loadProjectsLocal()
-      .then((projects) => {
+    Promise.all([
+      loadProjectsLocal(),
+      loadPreviewFloorPreference().catch(() => null),
+    ])
+      .then(([projects, floorPreference]) => {
         if (!active) return;
+        const persistentFloor = floorPreference
+          ?? projects[0]?.preview.scene.ground
+          ?? DEFAULT_PREVIEW_SCENE_SETTINGS.ground;
+        persistentFloorRef.current = structuredClone(persistentFloor);
+        if (!floorPreference) {
+          void savePreviewFloorPreference(persistentFloor);
+        }
         setSavedProjects(projects);
         if (projects[0]) {
-          setProject(projects[0]);
+          setProject(withPersistentFloor(projects[0], persistentFloor));
           setNotice(`${projects[0].name} loaded from your library`);
+        } else {
+          setProject((current) => withPersistentFloor(current, persistentFloor));
         }
       })
       .catch(() => setNotice("Saved materials are unavailable in this browser"));
@@ -242,7 +307,7 @@ export function MaterialViewerClient() {
   const openFile = async (file: File) => {
     try {
       const imported = await importMaterialPack(file);
-      setProject(imported);
+      setProject(withPersistentFloor(imported, persistentFloorRef.current));
       setChannel("material");
       setShape(imported.preview.shape);
       setShowGrid(imported.preview.showGrid);
@@ -269,7 +334,7 @@ export function MaterialViewerClient() {
   const selectSavedProject = (projectId: string) => {
     const selected = savedProjects.find((item) => item.id === projectId);
     if (!selected) return;
-    setProject(selected);
+    setProject(withPersistentFloor(selected, persistentFloorRef.current));
     setChannel("material");
     setShape(selected.preview.shape);
     setShowGrid(selected.preview.showGrid);
@@ -311,6 +376,32 @@ export function MaterialViewerClient() {
     setNotice("Map updated in the viewer");
   };
 
+  const updatePreviewScene = (values: Partial<PreviewSceneSettings>) => {
+    if (values.ground) {
+      persistentFloorRef.current = structuredClone(values.ground);
+      void savePreviewFloorPreference(values.ground).catch(() => {
+        setNotice("The floor preference could not be saved");
+      });
+    }
+    setProject((current) => ({
+      ...current,
+      updatedAt: new Date().toISOString(),
+      preview: {
+        ...current.preview,
+        scene: { ...current.preview.scene, ...values },
+      },
+    }));
+    setNotice("Scene updated in the viewer");
+  };
+
+  const updateUvTiling = (uvTiling: 1 | 2 | 4) => {
+    setProject((current) => ({
+      ...current,
+      updatedAt: new Date().toISOString(),
+      preview: { ...current.preview, uvTiling },
+    }));
+  };
+
   const changePreviewResolution = (value: string) => {
     const resolution = Number(value) as ViewerPreviewResolution;
     if (
@@ -344,7 +435,10 @@ export function MaterialViewerClient() {
       await deleteProjectLocal(selected.id);
       const remaining = savedProjects.filter((item) => item.id !== selected.id);
       setSavedProjects(remaining);
-      setProject(remaining[0] ?? createStarterProject());
+      setProject(withPersistentFloor(
+        remaining[0] ?? createStarterProject(),
+        persistentFloorRef.current,
+      ));
       setChannel("material");
       setNotice(`${selected.name} deleted`);
     } catch (error) {
@@ -379,10 +473,16 @@ export function MaterialViewerClient() {
       <section className="viewer-stage">
         <DeferredMaterialPreview
           evaluation={evaluation}
+          floorEvaluation={
+            selectedFloorProject ? savedFloorEvaluation : undefined
+          }
           shape={shape}
           channel={channel}
           showGrid={showGrid}
           autoRotate={autoRotate}
+          uvTiling={project.preview.uvTiling}
+          onUvTilingChange={updateUvTiling}
+          sceneSettings={project.preview.scene}
           mapSettings={project.mapSettings}
           className="material-preview--viewer"
         />
@@ -410,6 +510,17 @@ export function MaterialViewerClient() {
           ))}
         </div>
 
+        {isSceneSettingsOpen ? (
+          <section className="viewer-scene-popover">
+            <PreviewSceneControls
+              settings={project.preview.scene}
+              materialName={project.name}
+              libraryMaterials={floorLibraryMaterials}
+              onUpdate={updatePreviewScene}
+            />
+          </section>
+        ) : null}
+
         <div className="viewer-toolbar">
           <div className="viewer-shapes">
             {([
@@ -422,7 +533,52 @@ export function MaterialViewerClient() {
           </div>
           <span />
           <button className={showGrid ? "is-active" : ""} onClick={() => setShowGrid((value) => !value)}><Grid3X3 size={14} /> Ground</button>
+          <label className="viewer-floor-quick-select">
+            <span>Floor</span>
+            <select
+              aria-label="Quick floor material"
+              value={project.preview.scene.ground.material === "library"
+                && project.preview.scene.ground.materialProjectId
+                ? `library:${project.preview.scene.ground.materialProjectId}`
+                : project.preview.scene.ground.material}
+              onChange={(event) => {
+                const value = event.target.value;
+                updatePreviewScene({
+                  ground: {
+                    ...project.preview.scene.ground,
+                    material: value.startsWith("library:")
+                      ? "library"
+                      : value === "active"
+                        ? "active"
+                        : "studio",
+                    materialProjectId: value.startsWith("library:")
+                      ? value.slice("library:".length)
+                      : null,
+                  },
+                });
+              }}
+            >
+              <option value="studio">Studio</option>
+              <option value="active">Current — {project.name}</option>
+              {floorLibraryMaterials.length ? (
+                <optgroup label="Saved materials">
+                  {floorLibraryMaterials.map((material) => (
+                    <option key={material.id} value={`library:${material.id}`}>
+                      {material.name}
+                    </option>
+                  ))}
+                </optgroup>
+              ) : null}
+              {project.preview.scene.ground.material === "library"
+                && !selectedFloorProject ? (
+                  <option
+                    value={`library:${project.preview.scene.ground.materialProjectId ?? "missing"}`}
+                  >Missing saved material</option>
+                ) : null}
+            </select>
+          </label>
           <button className={autoRotate ? "is-active" : ""} onClick={() => setAutoRotate((value) => !value)}><RotateCw size={14} /> Rotate</button>
+          <button className={isSceneSettingsOpen ? "is-active" : ""} onClick={() => setSceneSettingsOpen((value) => !value)}><SlidersHorizontal size={14} /> Scene &amp; Floor</button>
         </div>
       </section>
 

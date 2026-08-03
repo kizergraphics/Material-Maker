@@ -213,8 +213,29 @@ function channelPixelsChanged(
   const previousValues = previous[channel] as Record<string, number | boolean>;
   const nextValues = next[channel] as Record<string, number | boolean>;
   return Object.keys(nextValues).some(
-    (key) => key !== "enabled" && previousValues[key] !== nextValues[key],
+    (key) =>
+      key !== "enabled" &&
+      key !== "depth" &&
+      previousValues[key] !== nextValues[key],
   );
+}
+
+function changedMapChannels(
+  previous: MaterialProject["mapSettings"],
+  next: MaterialProject["mapSettings"],
+) {
+  const changed = new Set(
+    textureMapChannels.filter((channel) =>
+      channelPixelsChanged(previous, next, channel),
+    ),
+  );
+  // Normal and AO are derived from the processed height field. Any height
+  // adjustment must refresh those dependent maps as well.
+  if (changed.has("height")) {
+    changed.add("normal");
+    changed.add("ao");
+  }
+  return textureMapChannels.filter((channel) => changed.has(channel));
 }
 
 export function useMaterialEvaluation(
@@ -466,13 +487,7 @@ export function useMaterialEvaluation(
     const hasCompletedFullResolution =
       completed?.source === source && completed.maxEdge === maxEdge;
     const changedChannels = hasCompletedFullResolution
-      ? textureMapChannels.filter((channel) =>
-          channelPixelsChanged(
-            completed.settings,
-            project.mapSettings,
-            channel,
-          ),
-        )
+      ? changedMapChannels(completed.settings, project.mapSettings)
       : textureMapChannels;
 
     // Enabling or disabling a map only affects preview composition; its pixel
@@ -504,12 +519,9 @@ export function useMaterialEvaluation(
           latestCompleted.maxEdge !== maxEdge;
         const fullResolutionChanges = generateAll
           ? textureMapChannels
-          : textureMapChannels.filter((channel) =>
-              channelPixelsChanged(
-                latestCompleted.settings,
-                project.mapSettings,
-                channel,
-              ),
+          : changedMapChannels(
+              latestCompleted.settings,
+              project.mapSettings,
             );
         const payload = await generateAtResolution(
           maxEdge,
@@ -563,12 +575,9 @@ export function useMaterialEvaluation(
           latestInteractive?.source === source &&
           latestInteractive.maxEdge === interactiveEdge;
         const interactiveChanges = canReuseInteractive
-          ? textureMapChannels.filter((channel) =>
-              channelPixelsChanged(
-                latestInteractive.settings,
-                project.mapSettings,
-                channel,
-              ),
+          ? changedMapChannels(
+              latestInteractive.settings,
+              project.mapSettings,
             )
           : textureMapChannels;
 

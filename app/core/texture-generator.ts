@@ -198,6 +198,29 @@ export async function prepareSourceTexture(
   );
 }
 
+function buildHeightValues(
+  prepared: PreparedSourceTexture,
+  settings: MapGenerationSettings,
+) {
+  const { luminance, width, height, scale } = prepared;
+  const blurredHeight = boxBlur(
+    luminance,
+    width,
+    height,
+    settings.height.blur * Math.max(1, scale),
+  );
+  const values = new Float32Array(width * height);
+  for (let index = 0; index < values.length; index += 1) {
+    let value =
+      (blurredHeight[index] - 0.5) * settings.height.contrast +
+      0.5 +
+      settings.height.bias;
+    if (settings.height.invert) value = 1 - value;
+    values[index] = clamp(value);
+  }
+  return values;
+}
+
 export function generateDerivedMap(
   prepared: PreparedSourceTexture,
   settings: MapGenerationSettings,
@@ -243,33 +266,24 @@ export function generateDerivedMap(
 
   if (channel === "height") {
     const heightMap = new Uint8ClampedArray(pixelCount * 4);
-    const blurredHeight = boxBlur(
-      luminance,
-      width,
-      height,
-      settings.height.blur * Math.max(1, scale),
-    );
+    const heightValues = buildHeightValues(prepared, settings);
     for (let index = 0; index < pixelCount; index += 1) {
-      let value =
-        (blurredHeight[index] - 0.5) * settings.height.contrast +
-        0.5 +
-        settings.height.bias;
-      if (settings.height.invert) value = 1 - value;
-      writeGray(heightMap, index * 4, value);
+      writeGray(heightMap, index * 4, heightValues[index]);
     }
     return { heightMap };
   }
 
   if (channel === "normal") {
     const normal = new Uint8ClampedArray(pixelCount * 4);
+    const heightValues = buildHeightValues(prepared, settings);
     for (let y = 0; y < height; y += 1) {
       for (let x = 0; x < width; x += 1) {
         const index = y * width + x;
         const offset = index * 4;
-        const left = luminance[y * width + ((x - 1 + width) % width)];
-        const right = luminance[y * width + ((x + 1) % width)];
-        const down = luminance[((y - 1 + height) % height) * width + x];
-        const up = luminance[((y + 1) % height) * width + x];
+        const left = heightValues[y * width + ((x - 1 + width) % width)];
+        const right = heightValues[y * width + ((x + 1) % width)];
+        const down = heightValues[((y - 1 + height) % height) * width + x];
+        const up = heightValues[((y + 1) % height) * width + x];
         let nx =
           (left - right) *
           settings.normal.strength *
@@ -328,15 +342,16 @@ export function generateDerivedMap(
   }
 
   const ambientOcclusion = new Uint8ClampedArray(pixelCount * 4);
+  const heightValues = buildHeightValues(prepared, settings);
   const aoBlur = boxBlur(
-    luminance,
+    heightValues,
     width,
     height,
     settings.ao.radius * Math.max(1, scale),
   );
   for (let index = 0; index < pixelCount; index += 1) {
     const offset = index * 4;
-    const cavity = Math.max(0, aoBlur[index] - luminance[index]);
+    const cavity = Math.max(0, aoBlur[index] - heightValues[index]);
     const ao = clamp(
       1 - cavity * settings.ao.strength * 5 + settings.ao.bias,
     );

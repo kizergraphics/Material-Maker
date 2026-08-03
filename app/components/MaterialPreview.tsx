@@ -14,7 +14,9 @@ import {
   MaterialPluginBase,
   Mesh,
   MeshBuilder,
+  MirrorTexture,
   PBRMaterial,
+  Plane,
   Scene,
   SceneLoader,
   ShaderLanguage,
@@ -36,15 +38,20 @@ import type { MaterialEvaluation } from "../core/material-evaluator";
 import type {
   MapGenerationSettings,
   PreviewChannel,
+  PreviewSceneSettings,
   PreviewShape,
 } from "../core/material-types";
 
 type Props = {
   evaluation: MaterialEvaluation;
+  floorEvaluation?: MaterialEvaluation;
   shape: PreviewShape;
   channel: PreviewChannel;
   showGrid: boolean;
   autoRotate: boolean;
+  uvTiling: UvTiling;
+  onUvTilingChange: (tiling: UvTiling) => void;
+  sceneSettings: PreviewSceneSettings;
   mapSettings: MapGenerationSettings;
   className?: string;
 };
@@ -446,6 +453,23 @@ function packOrmTexture(
   return packed;
 }
 
+function packNormalHeightTexture(
+  normal: Uint8ClampedArray,
+  heightMap: Uint8ClampedArray,
+  width: number,
+  height: number,
+  enabled: { normal: boolean; height: boolean },
+) {
+  const packed = new Uint8ClampedArray(width * height * 4);
+  for (let offset = 0; offset < packed.length; offset += 4) {
+    packed[offset] = enabled.normal ? normal[offset] : 128;
+    packed[offset + 1] = enabled.normal ? normal[offset + 1] : 128;
+    packed[offset + 2] = enabled.normal ? normal[offset + 2] : 255;
+    packed[offset + 3] = enabled.height ? heightMap[offset] : 255;
+  }
+  return packed;
+}
+
 function ormSourcesEqual(
   previous: OrmSources | undefined,
   next: OrmSources,
@@ -460,10 +484,14 @@ function ormSourcesEqual(
 
 export function MaterialPreview({
   evaluation,
+  floorEvaluation,
   shape,
   channel,
   showGrid,
   autoRotate,
+  uvTiling,
+  onUvTilingChange,
+  sceneSettings,
   mapSettings,
   className,
 }: Props) {
@@ -472,18 +500,29 @@ export function MaterialPreview({
   const sceneRef = useRef<Scene | null>(null);
   const previewGroupRef = useRef<PreviewMeshGroup | null>(null);
   const groundRef = useRef<Mesh | null>(null);
+  const groundMaterialRef = useRef<PBRMaterial | null>(null);
+  const activeGroundMaterialRef = useRef<PBRMaterial | StandardMaterial | null>(null);
+  const activeGroundTexturesRef = useRef<BaseTexture[]>([]);
+  const mirrorTextureRef = useRef<MirrorTexture | null>(null);
+  const keyLightRef = useRef<DirectionalLight | null>(null);
+  const fillLightRef = useRef<HemisphericLight | null>(null);
+  const rimLightRef = useRef<DirectionalLight | null>(null);
   const shadowRef = useRef<ShadowGenerator | null>(null);
   const materialRef = useRef<PBRMaterial | StandardMaterial | null>(null);
   const gpuStateRef = useRef<PreviewGpuState | null>(null);
   const autoRotateRef = useRef(autoRotate);
+  const sceneSettingsRef = useRef(sceneSettings);
   const isPointerInteractingRef = useRef(false);
   const [fps, setFps] = useState(60);
   const [mappingMode, setMappingMode] = useState<PreviewMappingMode>("uv");
-  const [uvTiling, setUvTiling] = useState<UvTiling>(1);
 
   useEffect(() => {
     autoRotateRef.current = autoRotate;
   }, [autoRotate]);
+
+  useEffect(() => {
+    sceneSettingsRef.current = sceneSettings;
+  }, [sceneSettings]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -546,6 +585,7 @@ export function MaterialPreview({
     keyLight.diffuse = new Color3(1, 0.84, 0.68);
     keyLight.shadowMinZ = 0.1;
     keyLight.shadowMaxZ = 20;
+    keyLightRef.current = keyLight;
 
     const shadows = new ShadowGenerator(1024, keyLight);
     shadows.useBlurExponentialShadowMap = true;
@@ -563,6 +603,7 @@ export function MaterialPreview({
     fill.intensity = 1.15;
     fill.diffuse = new Color3(0.58, 0.72, 1);
     fill.groundColor = new Color3(0.035, 0.04, 0.052);
+    fillLightRef.current = fill;
 
     const rim = new DirectionalLight(
       "rim-light",
@@ -571,19 +612,39 @@ export function MaterialPreview({
     );
     rim.intensity = 2.2;
     rim.diffuse = new Color3(0.35, 0.55, 1);
+    rimLightRef.current = rim;
 
     const ground = MeshBuilder.CreateGround(
       "studio-floor",
       { width: 12, height: 12 },
       scene,
     );
-    ground.position.y = -1.58;
-    const groundMaterial = new StandardMaterial("floor-material", scene);
-    groundMaterial.diffuseColor = new Color3(0.035, 0.041, 0.047);
-    groundMaterial.specularColor = new Color3(0.08, 0.09, 0.1);
+    ground.position.y = sceneSettingsRef.current.groundHeight;
+    const mirrorTexture = new MirrorTexture(
+      "floor-reflection",
+      512,
+      scene,
+      true,
+    );
+    mirrorTexture.mirrorPlane = Plane.FromPositionAndNormal(
+      new Vector3(0, ground.position.y, 0),
+      Vector3.Down(),
+    );
+    mirrorTexture.level = sceneSettingsRef.current.ground.reflection;
+    mirrorTextureRef.current = mirrorTexture;
+
+    const groundMaterial = new PBRMaterial("floor-material", scene);
+    groundMaterial.albedoColor = Color3.FromHexString(
+      sceneSettingsRef.current.ground.color,
+    );
+    groundMaterial.roughness = sceneSettingsRef.current.ground.roughness;
+    groundMaterial.metallic = sceneSettingsRef.current.ground.metallic;
+    groundMaterial.environmentIntensity = sceneSettingsRef.current.ground.reflection;
+    groundMaterial.reflectionTexture = mirrorTexture;
     ground.material = groundMaterial;
     ground.receiveShadows = true;
     groundRef.current = ground;
+    groundMaterialRef.current = groundMaterial;
 
     engineRef.current = engine;
     sceneRef.current = scene;
@@ -623,6 +684,14 @@ export function MaterialPreview({
       sceneRef.current = null;
       engineRef.current = null;
       shadowRef.current = null;
+      groundRef.current = null;
+      groundMaterialRef.current = null;
+      activeGroundMaterialRef.current = null;
+      activeGroundTexturesRef.current = [];
+      mirrorTextureRef.current = null;
+      keyLightRef.current = null;
+      fillLightRef.current = null;
+      rimLightRef.current = null;
       materialRef.current = null;
       gpuStateRef.current = null;
     };
@@ -635,6 +704,7 @@ export function MaterialPreview({
     for (const mesh of previewGroupRef.current?.meshes ?? []) {
       shadowRef.current?.removeShadowCaster(mesh);
     }
+    if (mirrorTextureRef.current) mirrorTextureRef.current.renderList = [];
     previewGroupRef.current?.root.dispose(false, true);
     previewGroupRef.current = null;
 
@@ -648,6 +718,10 @@ export function MaterialPreview({
           mesh.material = materialRef.current;
           shadowRef.current?.addShadowCaster(mesh, true);
         }
+        group.root.position.y = sceneSettingsRef.current.modelHeight;
+        if (mirrorTextureRef.current) {
+          mirrorTextureRef.current.renderList = group.meshes;
+        }
         previewGroupRef.current = group;
       })
       .catch((error: unknown) => {
@@ -660,6 +734,10 @@ export function MaterialPreview({
         );
         fallback.material = materialRef.current;
         shadowRef.current?.addShadowCaster(fallback, true);
+        fallback.position.y = sceneSettingsRef.current.modelHeight;
+        if (mirrorTextureRef.current) {
+          mirrorTextureRef.current.renderList = [fallback];
+        }
         previewGroupRef.current = { root: fallback, meshes: [fallback] };
       });
 
@@ -667,6 +745,44 @@ export function MaterialPreview({
       cancelled = true;
     };
   }, [shape]);
+
+  useEffect(() => {
+    const scene = sceneRef.current;
+    const ground = groundRef.current;
+    const groundMaterial = groundMaterialRef.current;
+    const mirrorTexture = mirrorTextureRef.current;
+
+    if (previewGroupRef.current) {
+      previewGroupRef.current.root.position.y = sceneSettings.modelHeight;
+    }
+    if (ground) ground.position.y = sceneSettings.groundHeight;
+    if (mirrorTexture) {
+      mirrorTexture.mirrorPlane = Plane.FromPositionAndNormal(
+        new Vector3(0, sceneSettings.groundHeight, 0),
+        Vector3.Down(),
+      );
+      mirrorTexture.level = sceneSettings.ground.reflection;
+    }
+    if (groundMaterial) {
+      groundMaterial.albedoColor = Color3.FromHexString(sceneSettings.ground.color);
+      groundMaterial.roughness = sceneSettings.ground.roughness;
+      groundMaterial.metallic = sceneSettings.ground.metallic;
+      groundMaterial.environmentIntensity = sceneSettings.ground.reflection;
+    }
+    if (scene) scene.environmentIntensity = sceneSettings.environmentIntensity;
+    if (keyLightRef.current) {
+      keyLightRef.current.intensity = sceneSettings.lights.key.intensity;
+      keyLightRef.current.diffuse = Color3.FromHexString(sceneSettings.lights.key.color);
+    }
+    if (fillLightRef.current) {
+      fillLightRef.current.intensity = sceneSettings.lights.fill.intensity;
+      fillLightRef.current.diffuse = Color3.FromHexString(sceneSettings.lights.fill.color);
+    }
+    if (rimLightRef.current) {
+      rimLightRef.current.intensity = sceneSettings.lights.rim.intensity;
+      rimLightRef.current.diffuse = Color3.FromHexString(sceneSettings.lights.rim.color);
+    }
+  }, [sceneSettings]);
 
   useEffect(() => {
     if (groundRef.current) groundRef.current.isVisible = showGrid;
@@ -687,6 +803,11 @@ export function MaterialPreview({
     channel === "material" && mapSettings.baseColor.enabled;
   const materialNormalEnabled =
     channel === "material" && mapSettings.normal.enabled;
+  const materialHeightEnabled =
+    channel === "material" && mapSettings.height.enabled;
+  const materialHeightDepth = materialHeightEnabled
+    ? mapSettings.height.depth
+    : 0;
   const materialRoughnessEnabled =
     channel === "material" && mapSettings.roughness.enabled;
   const materialMetallicEnabled =
@@ -701,6 +822,8 @@ export function MaterialPreview({
     evaluation.height,
     materialBaseColorEnabled,
     materialNormalEnabled,
+    materialHeightEnabled,
+    materialHeightDepth,
     materialRoughnessEnabled,
     materialMetallicEnabled,
     materialAoEnabled,
@@ -721,10 +844,19 @@ export function MaterialPreview({
             evaluation.height,
           );
         }
-        if (materialNormalEnabled) {
+        if (materialNormalEnabled || materialHeightEnabled) {
           updateTexture(
             currentGpuState.normal,
-            evaluation.normal,
+            packNormalHeightTexture(
+              evaluation.normal,
+              evaluation.heightMap,
+              evaluation.width,
+              evaluation.height,
+              {
+                normal: materialNormalEnabled,
+                height: materialHeightEnabled,
+              },
+            ),
             evaluation.width,
             evaluation.height,
           );
@@ -884,26 +1016,43 @@ export function MaterialPreview({
           triPlanarTextures.orm = orm.texture;
         } else {
           applyUvTiling(orm.texture, uvTiling);
-          pbr.metallicTexture = orm.texture;
-          pbr.useAmbientOcclusionFromMetallicTextureRed = true;
-          pbr.useRoughnessFromMetallicTextureGreen = true;
-          pbr.useMetallnessFromMetallicTextureBlue = true;
+        pbr.metallicTexture = orm.texture;
+        pbr.useAmbientOcclusionFromMetallicTextureRed = true;
+        pbr.useRoughnessFromMetallicTextureAlpha = false;
+        pbr.useRoughnessFromMetallicTextureGreen = true;
+        pbr.useMetallnessFromMetallicTextureBlue = true;
         }
-        if (materialNormalEnabled) {
+        if (materialNormalEnabled || materialHeightEnabled) {
           const normal = createTexture(
             scene,
-            "generated-normal",
-            previewNormal!,
+            "generated-normal-height",
+            packNormalHeightTexture(
+              evaluation.normal,
+              evaluation.heightMap,
+              evaluation.width,
+              evaluation.height,
+              {
+                normal: materialNormalEnabled,
+                height: materialHeightEnabled,
+              },
+            ),
             evaluation.width,
             evaluation.height,
           );
           nextGpuState.normal = normal;
           normal.texture.gammaSpace = false;
+          normal.texture.hasAlpha = materialHeightEnabled;
           if (mappingMode === "triplanar") {
             triPlanarTextures.normal = normal.texture;
           } else {
             applyUvTiling(normal.texture, uvTiling);
             pbr.bumpTexture = normal.texture;
+            pbr.useParallax = materialHeightDepth > 0;
+            // Occlusion parallax produces extreme UV distortion at grazing
+            // angles on curved preview meshes. Shallow regular parallax keeps
+            // the height relief without smearing the base color.
+            pbr.useParallaxOcclusion = false;
+            pbr.parallaxScaleBias = materialHeightDepth;
           }
         }
       } else {
@@ -919,9 +1068,7 @@ export function MaterialPreview({
       pbr.metallicF0Factor = 0.88;
       pbr.usePhysicalLightFalloff = true;
       pbr.enableSpecularAntiAliasing = true;
-      pbr.clearCoat.isEnabled = channel === "material";
-      pbr.clearCoat.intensity = 0.16;
-      pbr.clearCoat.roughness = 0.42;
+      pbr.clearCoat.isEnabled = false;
       material = pbr;
     }
 
@@ -940,6 +1087,8 @@ export function MaterialPreview({
     evaluation.width,
     materialAoEnabled,
     materialBaseColorEnabled,
+    materialHeightEnabled,
+    materialHeightDepth,
     materialMetallicEnabled,
     materialNormalEnabled,
     materialRoughnessEnabled,
@@ -952,6 +1101,169 @@ export function MaterialPreview({
     previewNormal,
     previewRoughness,
     uvTiling,
+  ]);
+
+  useEffect(() => {
+    const ground = groundRef.current;
+    const studioGroundMaterial = groundMaterialRef.current;
+    if (!ground || !studioGroundMaterial) return;
+
+    activeGroundMaterialRef.current?.dispose(false, false);
+    activeGroundMaterialRef.current = null;
+    for (const texture of activeGroundTexturesRef.current) texture.dispose();
+    activeGroundTexturesRef.current = [];
+
+    if (sceneSettings.ground.material === "active" && materialRef.current) {
+      const sourceMaterial = materialRef.current;
+      let activeGroundMaterial: PBRMaterial | StandardMaterial;
+
+      if (sourceMaterial instanceof PBRMaterial) {
+        const floorMaterial = new PBRMaterial("active-floor-material", sourceMaterial.getScene());
+        const gpuTextures = gpuStateRef.current;
+        floorMaterial.albedoColor = sourceMaterial.albedoColor.clone();
+        floorMaterial.albedoTexture = sourceMaterial.albedoTexture
+          ?? gpuTextures?.albedo?.texture
+          ?? null;
+        floorMaterial.bumpTexture = sourceMaterial.bumpTexture
+          ?? gpuTextures?.normal?.texture
+          ?? null;
+        floorMaterial.metallicTexture = sourceMaterial.metallicTexture
+          ?? gpuTextures?.orm?.texture
+          ?? null;
+        floorMaterial.useAmbientOcclusionFromMetallicTextureRed =
+          sourceMaterial.useAmbientOcclusionFromMetallicTextureRed;
+        floorMaterial.useRoughnessFromMetallicTextureAlpha = false;
+        floorMaterial.useRoughnessFromMetallicTextureGreen = false;
+        floorMaterial.useMetallnessFromMetallicTextureBlue = false;
+        floorMaterial.useParallax = sourceMaterial.useParallax;
+        floorMaterial.useParallaxOcclusion = false;
+        floorMaterial.parallaxScaleBias = sourceMaterial.parallaxScaleBias;
+        floorMaterial.invertNormalMapX = sourceMaterial.invertNormalMapX;
+        floorMaterial.invertNormalMapY = sourceMaterial.invertNormalMapY;
+        floorMaterial.directIntensity = sourceMaterial.directIntensity;
+        floorMaterial.specularIntensity = sourceMaterial.specularIntensity;
+        floorMaterial.usePhysicalLightFalloff = sourceMaterial.usePhysicalLightFalloff;
+        floorMaterial.enableSpecularAntiAliasing = true;
+        floorMaterial.backFaceCulling = false;
+        floorMaterial.twoSidedLighting = true;
+        floorMaterial.unlit = sourceMaterial.unlit;
+        activeGroundMaterial = floorMaterial;
+      } else {
+        const floorMaterial = new StandardMaterial(
+          "active-floor-material",
+          sourceMaterial.getScene(),
+        );
+        floorMaterial.diffuseColor = sourceMaterial.diffuseColor.clone();
+        floorMaterial.diffuseTexture = sourceMaterial.diffuseTexture
+          ?? gpuStateRef.current?.albedo?.texture
+          ?? null;
+        floorMaterial.bumpTexture = sourceMaterial.bumpTexture
+          ?? gpuStateRef.current?.normal?.texture
+          ?? null;
+        floorMaterial.backFaceCulling = false;
+        floorMaterial.twoSidedLighting = true;
+        activeGroundMaterial = floorMaterial;
+      }
+
+      if (activeGroundMaterial instanceof PBRMaterial) {
+        activeGroundMaterial.reflectionTexture = mirrorTextureRef.current;
+        activeGroundMaterial.environmentIntensity = sceneSettings.ground.reflection;
+        activeGroundMaterial.roughness = sceneSettings.ground.roughness;
+        activeGroundMaterial.metallic = sceneSettings.ground.metallic;
+      } else if (activeGroundMaterial instanceof StandardMaterial) {
+        activeGroundMaterial.reflectionTexture = mirrorTextureRef.current;
+      }
+      activeGroundMaterialRef.current = activeGroundMaterial;
+      ground.material = activeGroundMaterial;
+    } else if (
+      sceneSettings.ground.material === "library"
+      && floorEvaluation
+      && sceneRef.current
+    ) {
+      const floorMaterial = new PBRMaterial(
+        "library-floor-material",
+        sceneRef.current,
+      );
+      const albedo = createTexture(
+        sceneRef.current,
+        "library-floor-albedo",
+        floorEvaluation.albedo,
+        floorEvaluation.width,
+        floorEvaluation.height,
+      ).texture;
+      const normal = createTexture(
+        sceneRef.current,
+        "library-floor-normal",
+        packNormalHeightTexture(
+          floorEvaluation.normal,
+          floorEvaluation.heightMap,
+          floorEvaluation.width,
+          floorEvaluation.height,
+          { normal: true, height: true },
+        ),
+        floorEvaluation.width,
+        floorEvaluation.height,
+      ).texture;
+      const orm = createTexture(
+        sceneRef.current,
+        "library-floor-orm",
+        packOrmTexture(
+          {
+            ambientOcclusion: floorEvaluation.ambientOcclusion,
+            roughness: floorEvaluation.roughness,
+            metallic: floorEvaluation.metallic,
+          },
+          floorEvaluation.width,
+          floorEvaluation.height,
+          { ambientOcclusion: true, roughness: false, metallic: false },
+        ),
+        floorEvaluation.width,
+        floorEvaluation.height,
+      ).texture;
+      normal.gammaSpace = false;
+      normal.hasAlpha = true;
+      orm.gammaSpace = false;
+      floorMaterial.albedoTexture = albedo;
+      floorMaterial.bumpTexture = normal;
+      floorMaterial.metallicTexture = orm;
+      floorMaterial.useAmbientOcclusionFromMetallicTextureRed = true;
+      floorMaterial.useRoughnessFromMetallicTextureAlpha = false;
+      floorMaterial.useRoughnessFromMetallicTextureGreen = false;
+      floorMaterial.useMetallnessFromMetallicTextureBlue = false;
+      floorMaterial.useParallax = true;
+      floorMaterial.useParallaxOcclusion = false;
+      floorMaterial.parallaxScaleBias = 0.008;
+      floorMaterial.reflectionTexture = mirrorTextureRef.current;
+      floorMaterial.environmentIntensity = sceneSettings.ground.reflection;
+      floorMaterial.roughness = sceneSettings.ground.roughness;
+      floorMaterial.metallic = sceneSettings.ground.metallic;
+      floorMaterial.enableSpecularAntiAliasing = true;
+      floorMaterial.backFaceCulling = false;
+      floorMaterial.twoSidedLighting = true;
+      activeGroundTexturesRef.current = [albedo, normal, orm];
+      activeGroundMaterialRef.current = floorMaterial;
+      ground.material = floorMaterial;
+    } else {
+      ground.material = studioGroundMaterial;
+    }
+
+    return () => {
+      if (ground.material === activeGroundMaterialRef.current) {
+        ground.material = studioGroundMaterial;
+      }
+      activeGroundMaterialRef.current?.dispose(false, false);
+      activeGroundMaterialRef.current = null;
+      for (const texture of activeGroundTexturesRef.current) texture.dispose();
+      activeGroundTexturesRef.current = [];
+    };
+  }, [
+    evaluation,
+    floorEvaluation,
+    materialStructureKey,
+    sceneSettings.ground.material,
+    sceneSettings.ground.metallic,
+    sceneSettings.ground.reflection,
+    sceneSettings.ground.roughness,
   ]);
 
   return (
@@ -990,7 +1302,9 @@ export function MaterialPreview({
             <select
               aria-label="UV texture tiling"
               value={uvTiling}
-              onChange={(event) => setUvTiling(Number(event.target.value) as UvTiling)}
+              onChange={(event) =>
+                onUvTilingChange(Number(event.target.value) as UvTiling)
+              }
             >
               <option value={1}>1×</option>
               <option value={2}>2×</option>

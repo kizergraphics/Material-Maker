@@ -19,6 +19,7 @@ import {
 } from "./material-node-registry";
 import {
   DEFAULT_MAP_SETTINGS,
+  DEFAULT_PREVIEW_SCENE_SETTINGS,
   PROJECT_SCHEMA_VERSION,
   createStarterProject,
   type MaterialGraphEdge,
@@ -28,6 +29,7 @@ import {
   type ExportResolution,
   type PreviewChannel,
   type PreviewSettings,
+  type PreviewSceneSettings,
   type PreviewShape,
   type SourceTextureAsset,
   type TextureMapChannel,
@@ -73,7 +75,10 @@ type MaterialStore = {
   redo: () => void;
   setShape: (shape: PreviewShape) => void;
   setChannel: (channel: PreviewChannel) => void;
+  setUvTiling: (tiling: 1 | 2 | 4) => void;
   togglePreview: (key: "showGrid" | "autoRotate" | "tiled") => void;
+  updatePreviewScene: (values: Partial<PreviewSceneSettings>) => void;
+  setPersistentPreviewFloor: (ground: PreviewSceneSettings["ground"]) => void;
   setSourceTexture: (source: SourceTextureAsset) => void;
   removeSourceTexture: () => void;
   updateMapSettings: (
@@ -94,6 +99,8 @@ const emptyPreview: PreviewSettings = {
   showGrid: true,
   autoRotate: true,
   tiled: true,
+  uvTiling: 1,
+  scene: structuredClone(DEFAULT_PREVIEW_SCENE_SETTINGS),
 };
 
 function snapshot(
@@ -316,6 +323,13 @@ export const useMaterialStore = create<MaterialStore>((set, get) => ({
     if (!previous) return;
     set({
       ...previous,
+      preview: {
+        ...previous.preview,
+        scene: {
+          ...previous.preview.scene,
+          ground: state.preview.scene.ground,
+        },
+      },
       past: state.past.slice(0, -1),
       future: [snapshot(state), ...state.future].slice(0, 40),
     });
@@ -327,6 +341,13 @@ export const useMaterialStore = create<MaterialStore>((set, get) => ({
     if (!next) return;
     set({
       ...next,
+      preview: {
+        ...next.preview,
+        scene: {
+          ...next.preview.scene,
+          ground: state.preview.scene.ground,
+        },
+      },
       past: [...state.past, snapshot(state)].slice(-40),
       future: state.future.slice(1),
     });
@@ -336,9 +357,28 @@ export const useMaterialStore = create<MaterialStore>((set, get) => ({
     set((state) => ({ preview: { ...state.preview, shape } })),
   setChannel: (channel) =>
     set((state) => ({ preview: { ...state.preview, channel } })),
+  setUvTiling: (uvTiling) =>
+    set((state) => ({ preview: { ...state.preview, uvTiling } })),
   togglePreview: (key) =>
     set((state) => ({
       preview: { ...state.preview, [key]: !state.preview[key] },
+    })),
+  updatePreviewScene: (values) =>
+    set((state) => ({
+      preview: {
+        ...state.preview,
+        scene: { ...state.preview.scene, ...values },
+      },
+    })),
+  setPersistentPreviewFloor: (ground) =>
+    set((state) => ({
+      preview: {
+        ...state.preview,
+        scene: {
+          ...state.preview.scene,
+          ground: structuredClone(ground),
+        },
+      },
     })),
 
   setSourceTexture: (sourceTexture) =>
@@ -407,38 +447,50 @@ export const useMaterialStore = create<MaterialStore>((set, get) => ({
   setExportResolution: (exportResolution) => set({ exportResolution }),
 
   replaceProject: (project) =>
-    set({
+    set((state) => ({
       projectId: project.id,
       projectName: project.name,
       createdAt: project.createdAt,
       hasActiveProject: true,
       nodes: ensureMaterialOutput(project.nodes),
       edges: project.edges,
-      preview: project.preview,
+      preview: {
+        ...project.preview,
+        scene: {
+          ...project.preview.scene,
+          ground: structuredClone(state.preview.scene.ground),
+        },
+      },
       sourceTexture: project.sourceTexture,
       mapSettings: project.mapSettings,
       exportResolution: project.exportResolution,
       selectedNodeId: null,
       past: [],
       future: [],
-    }),
+    })),
 
   closeProject: () =>
-    set({
+    set((state) => ({
       projectId: null,
       projectName: "",
       createdAt: "",
       hasActiveProject: false,
       nodes: [],
       edges: [],
-      preview: structuredClone(emptyPreview),
+      preview: {
+        ...structuredClone(emptyPreview),
+        scene: {
+          ...structuredClone(emptyPreview.scene),
+          ground: structuredClone(state.preview.scene.ground),
+        },
+      },
       sourceTexture: null,
       mapSettings: structuredClone(DEFAULT_MAP_SETTINGS),
       exportResolution: 1024,
       selectedNodeId: null,
       past: [],
       future: [],
-    }),
+    })),
 
   newProject: () => {
     const project = createStarterProject();

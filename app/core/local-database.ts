@@ -1,8 +1,9 @@
 export const PROJECT_STORE = "projects";
 export const GENERATED_MAP_CACHE_STORE = "generated-map-cache";
+export const PREFERENCE_STORE = "preferences";
 
 const DB_NAME = "forge-material-studio";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 export function openMaterialDatabase() {
   return new Promise<IDBDatabase>((resolve, reject) => {
@@ -20,6 +21,9 @@ export function openMaterialDatabase() {
           keyPath: "key",
         });
         store.createIndex("createdAt", "createdAt");
+      }
+      if (!database.objectStoreNames.contains(PREFERENCE_STORE)) {
+        database.createObjectStore(PREFERENCE_STORE, { keyPath: "key" });
       }
     };
     request.onsuccess = () => resolve(request.result);

@@ -17,14 +17,17 @@ import {
 } from "./generated-map-cache";
 import {
   openMaterialDatabase,
+  PREFERENCE_STORE,
   PROJECT_STORE,
 } from "./local-database";
 import { migrateMaterialGraph } from "./material-project-migrations";
 import {
   DEFAULT_MAP_SETTINGS,
+  DEFAULT_PREVIEW_SCENE_SETTINGS,
   PROJECT_SCHEMA_VERSION,
   type MaterialPackManifest,
   type MaterialProject,
+  type PreviewSceneSettings,
 } from "./material-types";
 import {
   evaluateSourceTexture,
@@ -52,6 +55,34 @@ function isLocalImageDataUrl(value: string, mimeType?: string) {
 }
 
 const finiteNumber = z.number().finite();
+const hexColor = z.string().regex(/^#[0-9a-f]{6}$/i);
+const previewLightSchema = z.object({
+  intensity: finiteNumber,
+  color: hexColor,
+});
+const previewGroundSchema = z.object({
+  material: z.enum(["studio", "active", "library"]),
+  materialProjectId: z.string().min(1).max(128).nullable(),
+  color: hexColor,
+  roughness: finiteNumber,
+  metallic: finiteNumber,
+  reflection: finiteNumber,
+});
+const previewSceneSchema = z.object({
+  modelHeight: finiteNumber,
+  groundHeight: finiteNumber,
+  environmentIntensity: finiteNumber,
+  ground: previewGroundSchema.partial({
+    material: true,
+    materialProjectId: true,
+  }),
+  lights: z.object({
+    key: previewLightSchema,
+    fill: previewLightSchema,
+    rim: previewLightSchema,
+  }),
+});
+const PREVIEW_FLOOR_PREFERENCE_KEY = "preview-floor";
 const mapSettingsSchema = z.object({
   baseColor: z.object({
     enabled: z.boolean(),
@@ -62,6 +93,7 @@ const mapSettingsSchema = z.object({
   }).partial().optional(),
   height: z.object({
     enabled: z.boolean(),
+    depth: finiteNumber,
     contrast: finiteNumber,
     bias: finiteNumber,
     blur: finiteNumber,
@@ -174,6 +206,8 @@ const projectSchema = z.object({
     showGrid: z.boolean(),
     autoRotate: z.boolean(),
     tiled: z.boolean(),
+    uvTiling: z.union([z.literal(1), z.literal(2), z.literal(4)]).optional(),
+    scene: previewSceneSchema.optional(),
   }),
   sourceTexture: sourceTextureSchema.nullable().optional(),
   mapSettings: mapSettingsSchema.optional(),
@@ -199,12 +233,38 @@ function normalizeProject(
           : undefined,
       }
     : null;
+  const suppliedScene = value.preview.scene;
+  const defaultScene = structuredClone(DEFAULT_PREVIEW_SCENE_SETTINGS);
+  const normalizedScene: PreviewSceneSettings = suppliedScene
+    ? {
+        ...defaultScene,
+        ...suppliedScene,
+        ground: {
+          ...defaultScene.ground,
+          ...suppliedScene.ground,
+          material: suppliedScene.ground.material ?? defaultScene.ground.material,
+          materialProjectId:
+            suppliedScene.ground.materialProjectId
+            ?? defaultScene.ground.materialProjectId,
+        },
+        lights: {
+          key: { ...defaultScene.lights.key, ...suppliedScene.lights.key },
+          fill: { ...defaultScene.lights.fill, ...suppliedScene.lights.fill },
+          rim: { ...defaultScene.lights.rim, ...suppliedScene.lights.rim },
+        },
+      }
+    : defaultScene;
   return {
     ...value,
     schemaVersion: PROJECT_SCHEMA_VERSION,
     nodes: migratedGraph.nodes,
     edges: migratedGraph.edges,
     sourceTexture,
+    preview: {
+      ...value.preview,
+      uvTiling: value.preview.uvTiling ?? 1,
+      scene: normalizedScene,
+    },
     mapSettings: {
       baseColor: { ...DEFAULT_MAP_SETTINGS.baseColor, ...supplied?.baseColor },
       height: { ...DEFAULT_MAP_SETTINGS.height, ...supplied?.height },
@@ -268,6 +328,51 @@ export async function loadProjectsLocal() {
     request.onerror = () => {
       database.close();
       reject(request.error ?? new Error("Saved projects could not be read."));
+    };
+  });
+}
+
+export async function savePreviewFloorPreference(
+  ground: PreviewSceneSettings["ground"],
+) {
+  const value = previewGroundSchema.parse(ground);
+  const database = await openMaterialDatabase();
+  return new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction(PREFERENCE_STORE, "readwrite");
+    transaction.objectStore(PREFERENCE_STORE).put({
+      key: PREVIEW_FLOOR_PREFERENCE_KEY,
+      value,
+    });
+    transaction.oncomplete = () => {
+      database.close();
+      resolve();
+    };
+    transaction.onerror = () => {
+      database.close();
+      reject(
+        transaction.error ?? new Error("The floor preference could not be saved."),
+      );
+    };
+  });
+}
+
+export async function loadPreviewFloorPreference() {
+  const database = await openMaterialDatabase();
+  return new Promise<PreviewSceneSettings["ground"] | null>((resolve, reject) => {
+    const request = database
+      .transaction(PREFERENCE_STORE, "readonly")
+      .objectStore(PREFERENCE_STORE)
+      .get(PREVIEW_FLOOR_PREFERENCE_KEY);
+    request.onsuccess = () => {
+      database.close();
+      const result = previewGroundSchema.safeParse(request.result?.value);
+      resolve(result.success ? result.data : null);
+    };
+    request.onerror = () => {
+      database.close();
+      reject(
+        request.error ?? new Error("The floor preference could not be read."),
+      );
     };
   });
 }

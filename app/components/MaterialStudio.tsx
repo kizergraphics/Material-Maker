@@ -61,7 +61,9 @@ import {
   getCachedProjectMapBlob,
   getCachedProjectMapBlobs,
   importMaterialPack,
+  loadPreviewFloorPreference,
   loadProjectsLocal,
+  savePreviewFloorPreference,
   saveProjectLocal,
 } from "../core/material-persistence";
 import {
@@ -90,6 +92,7 @@ import {
   type NodeValueMap,
 } from "../core/material-node-registry";
 import {
+  createStarterProject,
   getExportDimensions,
   type ExportResolution,
   type MaterialGraphNode,
@@ -106,8 +109,10 @@ import {
   prewarmDeferredMaterialTools,
 } from "./DeferredMaterialTools";
 import { MaterialNode } from "./MaterialNode";
+import { PreviewSceneControls } from "./PreviewSceneControls";
 
 const nodeTypes: NodeTypes = { materialNode: MaterialNode };
+const FLOOR_EVALUATION_FALLBACK = createStarterProject();
 
 const channelLabels: Array<{ id: PreviewChannel; label: string }> = [
   { id: "material", label: "Material" },
@@ -662,6 +667,7 @@ function StudioWorkspace() {
   const [workspaceView, setWorkspaceView] = useState<"graph" | "maps">("graph");
   const [savedProjects, setSavedProjects] = useState<MaterialProject[]>([]);
   const [isHelpOpen, setHelpOpen] = useState(false);
+  const [isSceneSettingsOpen, setSceneSettingsOpen] = useState(false);
   const [graphNodeThumbnails, setGraphNodeThumbnails] = useState<Record<string, string>>({});
   const graphThumbnailCacheRef = useRef(
     new Map<string, GraphThumbnailCacheEntry>(),
@@ -692,7 +698,12 @@ function StudioWorkspace() {
   const redo = useMaterialStore((state) => state.redo);
   const setShape = useMaterialStore((state) => state.setShape);
   const setChannel = useMaterialStore((state) => state.setChannel);
+  const setUvTiling = useMaterialStore((state) => state.setUvTiling);
   const togglePreview = useMaterialStore((state) => state.togglePreview);
+  const updatePreviewScene = useMaterialStore((state) => state.updatePreviewScene);
+  const setPersistentPreviewFloor = useMaterialStore(
+    (state) => state.setPersistentPreviewFloor,
+  );
   const replaceProject = useMaterialStore((state) => state.replaceProject);
   const closeProject = useMaterialStore((state) => state.closeProject);
   const newProject = useMaterialStore((state) => state.newProject);
@@ -715,6 +726,27 @@ function StudioWorkspace() {
         ? Math.min(2048, Math.max(sourceTexture.width, sourceTexture.height))
         : exportResolution
       : 256,
+  );
+  const selectedFloorProject = useMemo(
+    () => preview.scene.ground.material === "library"
+      ? savedProjects.find(
+          (project) => project.id === preview.scene.ground.materialProjectId,
+        )
+      : undefined,
+    [
+      preview.scene.ground.material,
+      preview.scene.ground.materialProjectId,
+      savedProjects,
+    ],
+  );
+  const { evaluation: savedFloorEvaluation } = useMaterialEvaluation(
+    selectedFloorProject ?? FLOOR_EVALUATION_FALLBACK,
+    256,
+  );
+  const floorLibraryMaterials = useMemo(
+    () => savedProjects
+      .map((project) => ({ id: project.id, name: project.name })),
+    [savedProjects],
   );
   const mapLabEvaluation = sourceEvaluation ?? evaluation;
   const compiledGraph = useMemo(
@@ -894,14 +926,19 @@ function StudioWorkspace() {
   useEffect(() => {
     let active = true;
     if ("gpu" in navigator) setRendererLabel("WebGPU available");
-    loadProjectsLocal()
-      .then(async (projects) => {
+    Promise.all([
+      loadProjectsLocal(),
+      loadPreviewFloorPreference().catch(() => null),
+    ])
+      .then(async ([projects, floorPreference]) => {
         if (!active) return;
         const savedMaterials = projects.filter((project) => project.id !== "oxidized-alloy");
         if (savedMaterials.length !== projects.length) {
           await deleteProjectLocal("oxidized-alloy");
         }
         if (!active) return;
+        const persistentFloor = floorPreference ?? savedMaterials[0]?.preview.scene.ground;
+        if (persistentFloor) setPersistentPreviewFloor(persistentFloor);
         setSavedProjects(savedMaterials);
         setHydrated(true);
         setSaveState("idle");
@@ -914,7 +951,17 @@ function StudioWorkspace() {
     return () => {
       active = false;
     };
-  }, [setHydrated]);
+  }, [setHydrated, setPersistentPreviewFloor]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    const timeout = window.setTimeout(() => {
+      void savePreviewFloorPreference(preview.scene.ground).catch(() => {
+        setSaveState("error");
+      });
+    }, 250);
+    return () => window.clearTimeout(timeout);
+  }, [hydrated, preview.scene.ground]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -1522,10 +1569,16 @@ function StudioWorkspace() {
             evaluation={
               workspaceView === "maps" ? mapLabEvaluation : evaluation
             }
+            floorEvaluation={
+              selectedFloorProject ? savedFloorEvaluation : undefined
+            }
             shape={preview.shape}
             channel={preview.channel}
             showGrid={preview.showGrid}
             autoRotate={preview.autoRotate}
+            uvTiling={preview.uvTiling}
+            onUvTilingChange={setUvTiling}
+            sceneSettings={preview.scene}
             mapSettings={mapSettings}
           />
 
@@ -1533,6 +1586,8 @@ function StudioWorkspace() {
             {channelLabels.map((item) => (
               <button
                 key={item.id}
+                type="button"
+                aria-pressed={preview.channel === item.id}
                 className={`${preview.channel === item.id ? "is-active" : ""}${item.id !== "material" && !mapSettings[item.id].enabled ? " is-disabled" : ""}`}
                 onClick={() => {
                   setSelectedNode(null);
@@ -1543,13 +1598,74 @@ function StudioWorkspace() {
           </div>
 
           <div className="preview-options">
-            <button className={preview.showGrid ? "is-active" : ""} onClick={() => togglePreview("showGrid")}><Grid3X3 size={13} /> Ground</button>
-            <button className={preview.autoRotate ? "is-active" : ""} onClick={() => togglePreview("autoRotate")}><RotateCw size={13} /> Rotate</button>
-            <button className={preview.tiled ? "is-active" : ""} onClick={() => togglePreview("tiled")}><Maximize2 size={13} /> Tile 1×</button>
+            <button type="button" aria-pressed={preview.showGrid} className={preview.showGrid ? "is-active" : ""} onClick={() => togglePreview("showGrid")}><Grid3X3 size={13} /> Ground</button>
+            <label className="preview-floor-quick-select">
+              <span>Floor material</span>
+              <select
+                aria-label="Quick floor material"
+                value={preview.scene.ground.material === "library"
+                  && preview.scene.ground.materialProjectId
+                  ? `library:${preview.scene.ground.materialProjectId}`
+                  : preview.scene.ground.material}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  updatePreviewScene({
+                    ground: {
+                      ...preview.scene.ground,
+                      material: value.startsWith("library:")
+                        ? "library"
+                        : value === "active"
+                          ? "active"
+                          : "studio",
+                      materialProjectId: value.startsWith("library:")
+                        ? value.slice("library:".length)
+                        : null,
+                    },
+                  });
+                }}
+              >
+                <option value="studio">Studio</option>
+                <option value="active">
+                  Current — {projectName || "Untitled material"}
+                </option>
+                {floorLibraryMaterials.length ? (
+                  <optgroup label="Saved materials">
+                    {floorLibraryMaterials.map((material) => (
+                      <option key={material.id} value={`library:${material.id}`}>
+                        {material.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                ) : null}
+                {preview.scene.ground.material === "library"
+                  && !selectedFloorProject ? (
+                    <option
+                      value={`library:${preview.scene.ground.materialProjectId ?? "missing"}`}
+                    >Missing saved material</option>
+                  ) : null}
+              </select>
+            </label>
+            <button type="button" aria-pressed={preview.autoRotate} className={preview.autoRotate ? "is-active" : ""} onClick={() => togglePreview("autoRotate")}><RotateCw size={13} /> Rotate</button>
+            <button type="button" aria-pressed={isSceneSettingsOpen} className={isSceneSettingsOpen ? "is-active" : ""} onClick={() => setSceneSettingsOpen((open) => !open)}><SlidersHorizontal size={13} /> Scene &amp; Floor</button>
+            <button
+              type="button"
+              className={preview.uvTiling > 1 ? "is-active" : ""}
+              onClick={() => setUvTiling(
+                preview.uvTiling === 1 ? 2 : preview.uvTiling === 2 ? 4 : 1,
+              )}
+            ><Maximize2 size={13} /> Tile {preview.uvTiling}×</button>
           </div>
 
           <div className="inspector-panel">
-            {workspaceView === "graph" && selectedNode && !selectedMapChannel ? (
+            {isSceneSettingsOpen ? (
+              <PreviewSceneControls
+                settings={preview.scene}
+                materialName={projectName}
+                libraryMaterials={floorLibraryMaterials}
+                onUpdate={updatePreviewScene}
+                onChangeStart={checkpoint}
+              />
+            ) : workspaceView === "graph" && selectedNode && !selectedMapChannel ? (
               <NodeInspector node={selectedNode} />
             ) : sourceTexture ? (
               <DeferredTextureMapInspector

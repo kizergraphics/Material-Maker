@@ -19,6 +19,49 @@ export const PROJECT_SCHEMA_VERSION = 4 as const;
 export type PreviewShape = "sphere" | "cube" | "plane";
 export type PreviewChannel = "material" | TextureMapChannel;
 
+export interface PreviewLightSettings {
+  intensity: number;
+  color: string;
+}
+
+export interface PreviewSceneSettings {
+  modelHeight: number;
+  groundHeight: number;
+  environmentIntensity: number;
+  ground: {
+    material: "studio" | "active" | "library";
+    materialProjectId: string | null;
+    color: string;
+    roughness: number;
+    metallic: number;
+    reflection: number;
+  };
+  lights: {
+    key: PreviewLightSettings;
+    fill: PreviewLightSettings;
+    rim: PreviewLightSettings;
+  };
+}
+
+export const DEFAULT_PREVIEW_SCENE_SETTINGS: PreviewSceneSettings = {
+  modelHeight: 0,
+  groundHeight: -1.58,
+  environmentIntensity: 0.82,
+  ground: {
+    material: "studio",
+    materialProjectId: null,
+    color: "#252a2f",
+    roughness: 0.24,
+    metallic: 0.45,
+    reflection: 0.72,
+  },
+  lights: {
+    key: { intensity: 4.1, color: "#ffd6ad" },
+    fill: { intensity: 1.15, color: "#94b8ff" },
+    rim: { intensity: 2.2, color: "#598cff" },
+  },
+};
+
 export interface SourceTextureAsset {
   name: string;
   mimeType: "image/png" | "image/jpeg" | "image/webp";
@@ -39,6 +82,7 @@ export interface MapGenerationSettings {
   };
   height: {
     enabled: boolean;
+    depth: number;
     contrast: number;
     bias: number;
     blur: number;
@@ -88,7 +132,7 @@ export function getExportDimensions(
 
 export const DEFAULT_MAP_SETTINGS: MapGenerationSettings = {
   baseColor: { enabled: true, brightness: 0, contrast: 1, saturation: 1, hue: 0 },
-  height: { enabled: true, contrast: 1.18, bias: 0, blur: 1, invert: false },
+  height: { enabled: true, depth: 0.008, contrast: 1.18, bias: 0, blur: 1, invert: false },
   normal: { enabled: true, strength: 2.2, detail: 1, invertY: false },
   roughness: { enabled: true, base: 0.62, variation: 0.34, invert: false },
   metallic: { enabled: true, base: 0, variation: 0, invert: false },
@@ -112,6 +156,8 @@ export interface PreviewSettings {
   showGrid: boolean;
   autoRotate: boolean;
   tiled: boolean;
+  uvTiling: 1 | 2 | 4;
+  scene: PreviewSceneSettings;
 }
 
 export interface MaterialProject {
@@ -162,6 +208,8 @@ export function createStarterProject(): MaterialProject {
       showGrid: true,
       autoRotate: true,
       tiled: true,
+      uvTiling: 1,
+      scene: structuredClone(DEFAULT_PREVIEW_SCENE_SETTINGS),
     },
     sourceTexture: null,
     mapSettings: structuredClone(DEFAULT_MAP_SETTINGS),
