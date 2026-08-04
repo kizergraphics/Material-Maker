@@ -1,6 +1,7 @@
 {
   "name": "forge-material-studio",
   "version": "0.1.0",
+  "license": "MIT",
   "private": true,
   "engines": {
     "node": ">=22.13.0"
@@ -44,8 +45,10 @@
     "wrangler": "^4.113.0"
   },
   "overrides": {
+    "fast-uri": "3.1.5",
     "postcss": "8.5.25",
-    "sharp": "0.35.0"
+    "sharp": "0.35.0",
+    "undici": "7.29.0"
   },
   "type": "module"
 }
