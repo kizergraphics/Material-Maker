@@ -1513,11 +1513,13 @@ input:focus-visible {
 }
 
 .material-handle {
-  width: 8px !important;
-  height: 8px !important;
+  width: 10px !important;
+  height: 10px !important;
   background: #91a1ad !important;
   border: 2px solid #182027 !important;
+  box-shadow: 0 0 0 1px rgba(188, 204, 214, .38);
   pointer-events: all;
+  z-index: 2;
 }
 
 .material-handle[data-port-type="color"] {
@@ -1533,7 +1535,7 @@ input:focus-visible {
 }
 
 .material-handle--input {
-  left: -5px !important;
+  left: 0 !important;
 }
 
 .material-handle--output {
